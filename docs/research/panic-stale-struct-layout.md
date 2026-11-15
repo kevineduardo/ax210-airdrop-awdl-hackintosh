@@ -6,7 +6,7 @@ Date: 2026-11-11. Kext analysed: Release, UUID `B0FFCFDD-5D6C-3FF0-BE8A-DB3E3D4C
 
 ## Summary
 
-- **Single cause of both panics: the kext was linked from objects compiled against two different versions of `struct ieee80211com`.**
+- Both panics have a single cause: the kext was linked from objects compiled against two different versions of `struct ieee80211com`.
   The TX pump change added 120 bytes (0x78) in the middle of the structure, in `ieee80211_var.h`. The incremental build only recompiled 3 files (`ItlIwx.cpp`, `AirportItlwmV2.cpp`, `AirportItlwmAWDLInterface.cpp`). The other 38 (all of net80211, including `ieee80211_node.c`, `ieee80211.c`, `ieee80211_proto.c`) kept the old layout.
 - It is not a bug in the pump code, nor a "Release-only" bug (optimizer, uninitialized memory). The Debug build made at the same time had the same defect and would have failed the same way.
 - The incremental build failed because the project puts `itl80211/openbsd` in `SYSTEM_HEADER_SEARCH_PATHS` (`-isystem`) and Xcode generates dependencies with `-MMD`, which ignores system headers. A change to `<net80211/ieee80211_var.h>` never forced its includers to recompile.
@@ -147,11 +147,11 @@ Note: older copies of the kext made before this fix still contain stale binaries
 
 The Release build never booted successfully and the pump never ran, so the two are separated, but within a single boot:
 
-1. **Test 6a**: kext **Sequoia Release `7F4D5A99`**, test 4 boot-args, **without** `-itlawdltxpump`:
+1. **Test 6a**: kext Sequoia Release `7F4D5A99`, test 4 boot-args, **without** `-itlawdltxpump`:
    `-itlawdl -itlawdlaw -itlawdllisten -itlawdlp2p -itlawdltx -itlawdldata -itlawdlpromisc`
    Expected: same as test 4 (awdl0 active, no panic). Confirm the UUID with `kmutil showloaded` and run `awdlctl show`.
 2. **Test 6b**, same boot, no reboot: `sudo tools/awdlctl/awdlctl pump on`, then `sudo tools/awdlctl/awdlctl lead 30000`, and AirDrop iPhone → Mac. A panic here would come from the pump and the report will say where.
 3. Only if 6b goes well: next boot with `-itlawdltxpump itlawdllead=30000` in the boot-args (the test 5 configuration).
-4. If 6a panics: repeat with **Debug `C5795D35`** and the same boot-args, to tell a real Release problem apart.
+4. If 6a panics: repeat with Debug `C5795D35` and the same boot-args, to tell a real Release problem apart.
 
 Keep `keepsyms=1 debug=0x100`, as before.

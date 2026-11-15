@@ -31,7 +31,7 @@ tools/check-kext.sh AirportItlwm.kext /tmp/kc-syms.txt
 
 Any `FAIL imports not in the kernel collection` line is a symbol the new build no longer exports (or does not export yet). For example, the Sequoia build checked against a 15.0.1 kernel collection misses 14 symbols in `IO80211Controller`/`IO80211SkywalkInterface`: that is why the Sequoia target needs 15.2 or later.
 
-On Apple-silicon Macs, `BootKernelExtensions.kc` still contains an x86_64 kernel collection that `kcsyms.py` can read, which is handy for a quick check, but it is only meaningful if it is the same macOS build as the target machine.
+On Apple-silicon Macs, `BootKernelExtensions.kc` still contains an x86_64 kernel collection that `kcsyms.py` can read, which is handy for a quick check. The result only means something if it is the same macOS build as the target machine.
 
 ## 2. Compare the vtables
 
@@ -43,7 +43,7 @@ tools/kc/kcsyms.py vtable IO80211Buffer           # on 15.8.1 this ends at 0x110
 tools/kc/kcsyms.py vtable IO80211BufferPool       # getBuffer must be at 0x118
 ```
 
-Each line is `slot offset, target address, symbol`. Compare the order with the header for that macOS version. Rules of thumb:
+Each line is `slot offset, target address, symbol`. Compare the order with the header for that macOS version. Some rules:
 
 - The ancestors' slots (OSObject → IOService → … → IO80211SkywalkInterface) must match exactly; a difference there means the parent headers are wrong too.
 - New methods of a class come right after its parent's last slot, in declaration order. `_RESERVED…` slots count.

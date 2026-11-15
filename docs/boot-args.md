@@ -100,7 +100,8 @@ The driver also accepts the IORegistry properties `AWDLListenEveryNth` (1 to 64,
 
 | Boot argument | What it does |
 |---|---|
-| `-btlfxadvsets` | Patches `bluetoothd` so it uses BLE advertising sets with a third-party controller. On macOS 15.8.1 (24H32) the patch table is only applied when the `bluetoothd` UUID matches exactly; on other builds nothing is patched and the log says why. On Tahoe 26.4.1 it uses crazyhulk's per-page patterns. |
+| `-btlfxadvsets` | Patches `bluetoothd` so it uses BLE advertising sets with a third-party controller. On macOS 15.8.1 (24H32) and 26.7.2 (25G332) the patch table is only applied when the `bluetoothd` UUID matches exactly, and then all six patches or none; on other builds nothing is patched and the log says why. On 26.4.1 it uses crazyhulk's per-page patterns. If `bluetoothd` started before Lilu was ready, BlueToolFixup restarts it once so the patches can apply. |
+| `-btlfxnolatefix` | Turns off that restart of an already running `bluetoothd`. |
 | `-btlfxadvsetsany` | Applies the patterns without the UUID check. Only for testing a new macOS build; a partial match is logged. |
 | `-btlfxa2dpcheck` | Upstream crazyhulk switch for the A2DP fast-connect gate. See [BLE advsets changes](research/ble-advsets-sequoia-changes.md) for a false positive on 15.8.1. |
 | `-btlfxdbg` | More logging (use with the Debug build). |

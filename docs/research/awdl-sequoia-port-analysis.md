@@ -15,7 +15,7 @@ Sources:
 | **UN** | a local checkout of Unopcoooo/itlwm, branch `awdl/sequoia-ac9560-preview` | Unopcoooo/itlwm, branch `awdl/sequoia-ac9560-preview` |
 | **KC** | `/System/Library/KernelCollections/BootKernelExtensions.kc` | the test machine (an AMD Ryzen 5600G desktop, macOS 15.8.1 (24H32)), Darwin 24.6.0 |
 
-The diff was generated with `diff -ruN itlwm-laobamac itlwm-crazyhulk`. It is 4546 lines long, with **4158 lines added and 10 removed**, spread across 17 files.
+The diff was generated with `diff -ruN itlwm-laobamac itlwm-crazyhulk`. It is 4546 lines long, with 4158 lines added and 10 removed, spread across 17 files.
 
 Important: the KC on the test machine is exactly the same build (15.8.1 / 24H32) that Unopcoooo generated the Sequoia headers from (UN `docs/awdl-status.md:38`). The symbol checks below therefore apply to the real target.
 
@@ -31,13 +31,13 @@ Important: the KC on the test machine is exactly the same build (15.8.1 / 24H32)
 | `itlwm/hal_iwx/ItlIwx.hpp` | +16 / −1 | Prototypes; `iwx_tvqm_enable_txq(..., int sta_id = IWX_STATION_ID)` |
 | `itlwm/hal_iwx/if_iwxreg.h` | +27 | `IWX_HOT_SPOT_CMD 0x53`, `iwx_hs20_roc_req/res`, `IWX_AX210_GP2_REG 0xd02c68` |
 | `itlwm/hal_iwx/if_iwxvar.h` | +38 | `sc_awdl_*`, `sc_aux_roc_*` and `sc_p2p_*` state |
-| `itl80211/openbsd/net80211/ieee80211_input.c` | +46 | Hook under `#ifdef AIRPORT_WCL` (CH lines 318–357): diverts vendor-127 action frames and data to awdl0, and filters management frames from foreign BSSs |
+| `itl80211/openbsd/net80211/ieee80211_input.c` | +46 | Hook under `#ifdef AIRPORT_WCL` (CH lines 318 to 357): diverts vendor-127 action frames and data to awdl0, and filters management frames from foreign BSSs |
 | `itl80211/openbsd/net80211/ieee80211_var.h` | +108 | Fields and callbacks `ic_vendor_action_handler`, `ic_awdl_listen`, `ic_awdl_tx`, `ic_awdl_data_handler`, `ic_awdl_addr*`, plus counters |
 | **Subtotal hal_iwx + net80211** | **+1171 / −8** | |
 | `AirportItlwm/AirportItlwmEthernetInterface.{cpp,hpp}` | +10 / −1 | Virtual method `getInterfaceAddress()` (awdl0 publishes its own MAC) |
-| `AirportItlwm/AirportItlwmSkywalkInterface.cpp` | +30 | `getHT_CAPABILITY` (CH:1014), used by `IO80211PeerManager::getHtCapabilityIE`. **The symbol exists in the Sequoia KC**, so it works the same way |
-| `AirportItlwm/AirportItlwmV2.cpp` (capability bits) | ~12 of +76 | `capabilities[4] |= 1` and `capabilities[3] |= 0x20`, under `#ifdef AIRPORT_WCL` (CH:1060–1071). UN confirms that wifip2pd 24H32 tests index 0x20, i.e. byte 4, bit 0 (UN `AirportItlwmV2.cpp:3615-3623`) |
-| `itlwm.xcodeproj/project.pbxproj` | +6 | File added **only** to Sources phase `F8D94CA52B9ABFE20081A3C4`, shared by Sonoma14.4 and Tahoe |
+| `AirportItlwm/AirportItlwmSkywalkInterface.cpp` | +30 | `getHT_CAPABILITY` (CH:1014), used by `IO80211PeerManager::getHtCapabilityIE`. The symbol exists in the Sequoia KC, so it works the same way |
+| `AirportItlwm/AirportItlwmV2.cpp` (capability bits) | ~12 of +76 | `capabilities[4] |= 1` and `capabilities[3] |= 0x20`, under `#ifdef AIRPORT_WCL` (CH:1060-1071). UN confirms that wifip2pd 24H32 tests index 0x20, i.e. byte 4, bit 0 (UN `AirportItlwmV2.cpp:3615-3623`) |
+| `itlwm.xcodeproj/project.pbxproj` | +6 | File added only to Sources phase `F8D94CA52B9ABFE20081A3C4`, shared by Sonoma14.4 and Tahoe |
 
 ### (b) Parts that depend on the Tahoe ABI
 
@@ -45,10 +45,10 @@ Important: the KC on the test machine is exactly the same build (15.8.1 / 24H32)
 |---|---|---|
 | `include/Airport/macOS26/IO80211AWDLProtocol.h` | +132 | 63 pure slots starting at 0x0fc8; `static_assert(sizeof==0x130)` |
 | `include/Airport/macOS26/IO80211VirtualInterface.h` | +143 | Tahoe layout (0x130), pure `setMacAddress` at 0x0f40 |
-| `AirportItlwm/AirportItlwmAWDLInterface.hpp` | +324 | Includes `macOS26/*` directly (lines 16–17); `extern "C"` `getMgmtFramePool`/`bpfTapInput` (lines 28–32) |
+| `AirportItlwm/AirportItlwmAWDLInterface.hpp` | +324 | Includes `macOS26/*` directly (lines 16 and 17); `extern "C"` `getMgmtFramePool`/`bpfTapInput` (lines 28 to 32) |
 | `AirportItlwm/AirportItlwmAWDLInterface.cpp` | +2248 | See the note below |
 | `AirportItlwm/AirportItlwmV2.{cpp,hpp}` (guarded parts) | ~64 + 13 | Fields `fAWDLIf`/`fAWDLBsdIf`, handlers, `createInterface()` and `configureInterface()` for awdl0, `destroyAWDLInterface()` |
-| `AirportItlwm/AirportItlwmSkywalkInterface.hpp` | +5 / −1 | Real `setVIRTUAL_IF_CREATE` only on Tahoe (lines 304–308) |
+| `AirportItlwm/AirportItlwmSkywalkInterface.hpp` | +5 / −1 | Real `setVIRTUAL_IF_CREATE` only on Tahoe (lines 304 to 308) |
 | **Subtotal (b)** | **≈ +2930** | |
 
 **Note on `AirportItlwmAWDLInterface.cpp`:** of its 2248 lines, only about 60 actually touch IO80211Family ABI. The rest is portable protocol logic: the AW timeline, peer-aligned listening, PSF/MI construction, the Ethernet↔802.11 datapath and the diagnostic properties. The ABI-dependent points are:
@@ -84,19 +84,19 @@ The condition is always `#if defined(AIRPORT_WCL) && __IO80211_TARGET != __MAC_1
 | `AirportItlwm/AirportItlwmV2.cpp:644` | `createInterface()`: no awdl0 path |
 | `AirportItlwm/AirportItlwmSkywalkInterface.hpp:304` | `setVIRTUAL_IF_CREATE` falls back to the `kIOReturnUnsupported` stub |
 
-Note: the `__IO80211_TARGET != __MAC_15_2` guards in `AirportItlwmSkywalkInterface.hpp:35/93/104` **are not AWDL guards**. They cover InfraProtocol differences between 15 and 26 and must not be touched.
+Note: the `__IO80211_TARGET != __MAC_15_2` guards in `AirportItlwmSkywalkInterface.hpp:35/93/104` are not AWDL guards. They cover InfraProtocol differences between 15 and 26 and must not be touched.
 
 **Current side effect on Sequoia:** with `-itlawdl`, the code under `#ifdef AIRPORT_WCL` (CH `AirportItlwmV2.cpp:340-350` and `:1060-1071`) installs the handlers and advertises the AWDL capability. However, `VIRTUAL_IF_CREATE` answers *Unsupported*, and the firmware filter is left open (`IWX_MAC_FILTER_IN_CONTROL_AND_MGMT`, `ItlIwx.cpp:8932`) with nothing consuming the frames.
 
 ### How the `AirportItlwm-Sequoia` target is defined (CH `itlwm.xcodeproj/project.pbxproj`)
 
-- Target `C2631DEBF2864F9B8272D88C` (pbxproj:2448–2466). Its own Sources phase: `AFFBDFD057C2402C908ECB89` (pbxproj:3359). It **does not contain** `AirportItlwmAWDLInterface.cpp`.
+- Target `C2631DEBF2864F9B8272D88C` (pbxproj:2448-2466). Its own Sources phase: `AFFBDFD057C2402C908ECB89` (pbxproj:3359). It does not contain `AirportItlwmAWDLInterface.cpp`.
 - Configurations Debug `2B4AD1BBF0014C848E6A7F18` (pbxproj:~4229) and Release `E71DD1C8720A4A5E8D09A1CD` (pbxproj:~4297):
   - `GCC_PREPROCESSOR_DEFINITIONS = AIRPORT_WCL, AIRPORT_VTD, AIRPORT, "__IO80211_TARGET=__MAC_15_2", __PRIVATE_SPI__, IO80211FAMILY_V2`
   - `INFOPLIST_FILE = AirportItlwm/WCL/Sequoia-Info.plist`, `MACOSX_DEPLOYMENT_TARGET = 15.2`, `CONFIGURATION_BUILD_DIR = $(SYMROOT)/$(CONFIGURATION)/Sequoia`
   - `SYSTEM_HEADER_SEARCH_PATHS = "itl80211/openbsd itl80211 include"`, `GCC_PREFIX_HEADER = itlwm/PrivateSPI.pch`
 - Tahoe (`7D5753727745775F75788913` and `D92AB006FB4B2B6A6032F9C7`) is the same, except for `__IO80211_TARGET=__MAC_26_0`, `WCL/Info.plist` and deployment target 10.15.
-- **Header directory selection is not in the pbxproj.** It is done by wrappers in `include/Airport/*.h`, all of the form `#if __IO80211_TARGET == __MAC_15_2` → `macOS15/…`, `#else` → `macOS26/…`. Example: `include/Airport/IO80211SkywalkInterface.h:10-14`. There is **no wrapper yet** for `IO80211VirtualInterface.h` and `IO80211AWDLProtocol.h`, because CH includes `macOS26/` directly.
+- Header directory selection is not in the pbxproj. It is done by wrappers in `include/Airport/*.h`, all of the form `#if __IO80211_TARGET == __MAC_15_2` → `macOS15/…`, `#else` → `macOS26/…`. Example: `include/Airport/IO80211SkywalkInterface.h:10-14`. There is no wrapper yet for `IO80211VirtualInterface.h` and `IO80211AWDLProtocol.h`, because CH includes `macOS26/` directly.
 - The schemes exist in `itlwm.xcodeproj/xcshareddata/xcschemes/AirportItlwm-Sequoia.xcscheme` and `AirportItlwm-Tahoe.xcscheme`.
 
 ---
@@ -105,15 +105,15 @@ Note: the `__IO80211_TARGET != __MAC_15_2` guards in `AirportItlwmSkywalkInterfa
 
 ### 3.1 Checking the claimed counts ("Tahoe ~95 vs Sequoia ~81")
 
-The claim is **inverted and miscounted**. The real counts are:
+The claim is inverted and miscounted. The real counts are:
 
 | | Tahoe (CH `macOS26/IO80211VirtualInterface.h`) | Sequoia (UN `macOS15/IO80211VirtualInterface.h`) |
 |---|---|---|
 | Lines containing `virtual` (raw grep) | **81** | **95** (93 declarations, plus "Nonvirtual" on line 118 and `_virtualExpansion` on line 121) |
-| Ancestor overrides | 53 (lines 38–90, including 5 `_abi_*`) | 53 (lines 24–76; same names, `enable` appears at the end) |
+| Ancestor overrides | 53 (lines 38 to 90, including 5 `_abi_*`) | 53 (lines 24 to 76; same names, `enable` appears at the end) |
 | New non-reserved slots | 28 (27 + pure `setMacAddress`) | 24 |
 | Reserved (`_RESERVED…0..15`) | 16 (macro `OSMetaClassDeclareReservedUnused`, not caught by the grep) | 16 (declared explicitly) |
-| **Total new slots** | **44** (0x0e68–0x0fc0) | **40** (0x0e60–0x0f98) |
+| **Total new slots** | **44** (0x0e68 to 0x0fc0) | **40** (0x0e60 to 0x0f98) |
 | **Total declared** | **97** | **93** |
 | `sizeof` | 0x130 (`IO80211SkywalkInterface` = 0x128) | 0x120 (`IO80211SkywalkInterface` = 0x118) |
 | Start of `IO80211AWDLProtocol` | 0x0fc8 | 0x0fa0 (constant delta of −0x28 = 5 slots) |
@@ -127,36 +127,36 @@ Legend for the CH column: **O** = crazyhulk overrides it; **C** = crazyhulk call
 | # | Method | Tahoe | Sequoia | Signature / notes | CH |
 |---|---|---|---|---|---|
 | 1 | `init(IO80211Controller*, ether_addr*, unsigned, const char*)` | 0xe68 | 0xe60 | Same; symbol `__ZN23IO80211VirtualInterface4initEP17IO80211ControllerP10ether_addrjPKc` **present in the KC** | **O + C** (`IO80211AWDLProtocol::init`, CH:1694) |
-| 2 | `setLinkState(IO80211LinkState, unsigned)` | 0xe70 | 0xe68 | Tahoe declares `IOReturn`; UN declares `void`. According to UN, the real one in 24H32 returns **bool** (UN `AirportItlwmV2.cpp:1083-1086`). CH ignores the return value, so this is not a problem | **C** (virtual, CH:1605) |
-| 3 | `forwardPacket(IO80211NetworkPacket*)` | 0xe78 | 0xe70 | Return IOReturn (T) / void (S, not verified) | – |
-| 4 | `handleIoctl(__ifnet*, unsigned long, void*)` | 0xe80 | 0xe78 | same | – |
-| 5 | `addPeerToCache(unsigned char*)` | 0xe88 | 0xe80 | same | – |
-| 6 | `deletePeerFromCache(unsigned char*)` | 0xe90 | 0xe88 | same | – |
-| 7 | `handleDebugCmd(apple80211_debug_command*)` | 0xe98 | 0xe90 | same | – |
-| 8 | `getPeerSlotDataStats(ether_addr*, bool, peerSlotDataStats*)` | 0xea0 | 0xe98 | same | – |
-| 9 | `getPeerDataStats(ether_addr*, bool, packetCounters_t*)` | 0xea8 | 0xea0 | same | – |
-| 10 | `clearPeerDataStats(ether_addr*, bool)` | 0xeb0 | 0xea8 | same | – |
-| 11 | `setAwdlCurrentChannelSequenceIndex(unsigned)` | 0xeb8 | 0xeb0 | same | – |
-| 12 | `isOutputFlowControlled()` | 0xec0 | 0xeb8 | bool (T) / void (S) | – |
-| 13 | `setOutputFlowControlled()` | 0xec8 | 0xec0 | | – |
-| 14 | `clearOutputFlowControlled()` | 0xed0 | 0xec8 | | – |
-| 15 | `flushFlowQueues(ether_addr*)` | 0xed8 | **does not exist** | Symbol absent from the 24H32 KC (verified) | – |
-| 16 | `configureAQMOutput()` | 0xee0 | 0xed0 | | – |
-| 17 | `attachToBpf()` | 0xee8 | 0xed8 | | – |
-| 18 | `configureIfnet()` | 0xef0 | 0xee0 | | – |
-| 19 | `reset()` | 0xef8 | 0xee8 | | – |
-| 20 | `dupAndTransmitMcastPacket(pkt*, u8*, u8*)` | 0xf00 | 0xef0 | | – |
-| 21 | `freeMulticastPacket(pkt*)` | 0xf08 | 0xef8 | | – |
-| 22 | `triggerAWDLMulticastTx(unsigned, u8)` | 0xf10 | 0xf00 | | – |
-| 23 | `p2pMulticastTx(IO80211NetworkPacket**, unsigned)` | 0xf18 | 0xf08 | | – |
-| 24 | `p2pMulticastTx(unsigned, bool)` | 0xf20 | **does not exist** | Symbol absent from the KC | – |
-| 25 | `signalMulticastPackets(unsigned, unsigned)` | 0xf28 | **does not exist** | Symbol absent from the KC | – |
-| 26 | `sendPendingPacketsToStack(pkt**, unsigned)` | 0xf30 | 0xf10 | | – |
-| 27 | `freePendingPackets(pkt**, unsigned)` | 0xf38 | 0xf18 | | – |
+| 2 | `setLinkState(IO80211LinkState, unsigned)` | 0xe70 | 0xe68 | Tahoe declares `IOReturn`; UN declares `void`. According to UN, the real one in 24H32 returns `bool` (UN `AirportItlwmV2.cpp:1083-1086`). CH ignores the return value, so this is not a problem | **C** (virtual, CH:1605) |
+| 3 | `forwardPacket(IO80211NetworkPacket*)` | 0xe78 | 0xe70 | Return IOReturn (T) / void (S, not verified) | none |
+| 4 | `handleIoctl(__ifnet*, unsigned long, void*)` | 0xe80 | 0xe78 | same | none |
+| 5 | `addPeerToCache(unsigned char*)` | 0xe88 | 0xe80 | same | none |
+| 6 | `deletePeerFromCache(unsigned char*)` | 0xe90 | 0xe88 | same | none |
+| 7 | `handleDebugCmd(apple80211_debug_command*)` | 0xe98 | 0xe90 | same | none |
+| 8 | `getPeerSlotDataStats(ether_addr*, bool, peerSlotDataStats*)` | 0xea0 | 0xe98 | same | none |
+| 9 | `getPeerDataStats(ether_addr*, bool, packetCounters_t*)` | 0xea8 | 0xea0 | same | none |
+| 10 | `clearPeerDataStats(ether_addr*, bool)` | 0xeb0 | 0xea8 | same | none |
+| 11 | `setAwdlCurrentChannelSequenceIndex(unsigned)` | 0xeb8 | 0xeb0 | same | none |
+| 12 | `isOutputFlowControlled()` | 0xec0 | 0xeb8 | bool (T) / void (S) | none |
+| 13 | `setOutputFlowControlled()` | 0xec8 | 0xec0 | | none |
+| 14 | `clearOutputFlowControlled()` | 0xed0 | 0xec8 | | none |
+| 15 | `flushFlowQueues(ether_addr*)` | 0xed8 | **does not exist** | Symbol absent from the 24H32 KC (verified) | none |
+| 16 | `configureAQMOutput()` | 0xee0 | 0xed0 | | none |
+| 17 | `attachToBpf()` | 0xee8 | 0xed8 | | none |
+| 18 | `configureIfnet()` | 0xef0 | 0xee0 | | none |
+| 19 | `reset()` | 0xef8 | 0xee8 | | none |
+| 20 | `dupAndTransmitMcastPacket(pkt*, u8*, u8*)` | 0xf00 | 0xef0 | | none |
+| 21 | `freeMulticastPacket(pkt*)` | 0xf08 | 0xef8 | | none |
+| 22 | `triggerAWDLMulticastTx(unsigned, u8)` | 0xf10 | 0xf00 | | none |
+| 23 | `p2pMulticastTx(IO80211NetworkPacket**, unsigned)` | 0xf18 | 0xf08 | | none |
+| 24 | `p2pMulticastTx(unsigned, bool)` | 0xf20 | **does not exist** | Symbol absent from the KC | none |
+| 25 | `signalMulticastPackets(unsigned, unsigned)` | 0xf28 | **does not exist** | Symbol absent from the KC | none |
+| 26 | `sendPendingPacketsToStack(pkt**, unsigned)` | 0xf30 | 0xf10 | | none |
+| 27 | `freePendingPackets(pkt**, unsigned)` | 0xf38 | 0xf18 | | none |
 | 28 | `setMacAddress(ether_addr&) = 0` | 0xf40 (in VI) | **moved** to `IO80211SkywalkInterface` (pure; CH `macOS15/IO80211SkywalkInterface.h:153`) | CH's `override` (`AirportItlwmAWDLInterface.hpp:84`) compiles on both; the slot differs but the compiler resolves it | **O** |
-| 29–44 | `_RESERVEDIO80211VirtualInterface0..15` | 0xf48–0xfc0 | 0xf20–0xf98 | | – |
+| 29 to 44 | `_RESERVEDIO80211VirtualInterface0..15` | 0xf48 to 0xfc0 | 0xf20 to 0xf98 | | none |
 
-Non-virtual functions and helpers that CH uses by symbol, all **present in the 24H32 KC** (verified with grep):
+Non-virtual functions and helpers that CH uses by symbol, all present in the 24H32 KC (verified with grep):
 
 - `__ZN23IO80211VirtualInterface16getMgmtFramePoolEv`
 - `__ZN23IO80211VirtualInterface11bpfTapInputEP13IO80211BufferjPvm`
@@ -164,7 +164,7 @@ Non-virtual functions and helpers that CH uses by symbol, all **present in the 2
 
 ### 3.3 Ancestor overrides (53 on both; names match one to one)
 
-Offsets differ from `setInterfaceEnable` onwards. This comes from the `IO80211SkywalkInterface` base and **changes nothing for the port**: the compiler resolves offsets using each target's base header, which is already validated for the laobamac STA on Sequoia.
+Offsets differ from `setInterfaceEnable` onwards. This comes from the `IO80211SkywalkInterface` base and changes nothing for the port: the compiler resolves offsets using each target's base header, which is already validated for the laobamac STA on Sequoia.
 
 Differences in the offset comments (Tahoe → Sequoia):
 
@@ -173,7 +173,7 @@ Differences in the offset comments (Tahoe → Sequoia):
 - `bpfTap` 0x9e0→0x9d8
 - `setMulticastAddresses` 0xa88→0xa80
 - `createPeerManager` 0xb08→0xb00
-- **`postMessage` 0xb18→0xb10 (C)**
+- `postMessage` 0xb18→0xb10 (C)
 - `logTx*`/`inputPacket`/`pending`/`packetSpace` −8
 - `getWmeTxCounters` 0xc38→0xc30, `setWoWEnabled`/`wowEnabled`/`printDataPath` −8
 - `_abi_0c68..0c80`, `flushPacketQueues`, `cachePeer`, `shouldLog`, `vlogDebug*`, `getP2PSkywalkPeerMgr`, `findPeer` −8
@@ -184,11 +184,11 @@ CH uses these: **O** `free` (CH:1804); **C** `attach`/`start`/`stop`/`detach` (C
 
 ### 3.4 IO80211AWDLProtocol
 
-The **63 methods are identical in name, signature and order**. I checked with a `diff` of the `= 0;` lines between CH `macOS26/IO80211AWDLProtocol.h:64-126` and UN `macOS15/IO80211AWDLProtocol.h:60-122`: they are equal. The only difference is the base offset, 0x0fc8+8·i on Tahoe and 0x0fa0+8·i on Sequoia. In both cases `sizeof` adds no ivars (Tahoe 0x130; Sequoia 0x120, per the `static_assert` in UN `ItlAwdlInterface.hpp:185`).
+The 63 methods are identical in name, signature and order. I checked with a `diff` of the `= 0;` lines between CH `macOS26/IO80211AWDLProtocol.h:64-126` and UN `macOS15/IO80211AWDLProtocol.h:60-122`: they are equal. The only difference is the base offset, 0x0fc8+8·i on Tahoe and 0x0fa0+8·i on Sequoia. In both cases `sizeof` adds no ivars (Tahoe 0x130; Sequoia 0x120, per the `static_assert` in UN `ItlAwdlInterface.hpp:185`).
 
 CH overrides all 63, since they are pure, and actually implements about 25. The rest are `AWDL_SET_STUB`/`AWDL_GET_STUB` stubs. CH's `.hpp` has 72 `override`s: 63 AWDL, plus `init`/`free`/`setMacAddress`/`setProperties`, plus 5 from `AirportItlwmAWDLEthernetInterface`.
 
-The symbol `__ZN19IO80211AWDLProtocol10gMetaClassE` is **present in the 24H32 KC** (verified).
+The symbol `__ZN19IO80211AWDLProtocol10gMetaClassE` is present in the 24H32 KC (verified).
 
 Small defects in the UN header:
 
@@ -210,7 +210,7 @@ Small defects in the UN header:
 | AWDL role = 6 | CH hpp:36 | UN `AirportItlwmV2.cpp:67` `static_assert(APPLE80211_VIF_AWDL == 6)` | **Same** |
 | `apple80211_capability_data` | 21 bytes | 19 bytes (`include/Airport/apple80211_ioctl.h:437-447`) | Bytes 3 and 4 are within bounds; OK |
 
-Peer manager functions that CH cites as the basis of its reverse engineering, all **present in 24H32**:
+Peer manager functions that CH cites as the basis of its reverse engineering, all present in 24H32:
 
 - `IO80211AWDLPeerManager::{actionFrameHasCorrectOUI, configureValidAWDLChannels, reportDataPathEvents, setAwdlChannelSequence, monitorTimeline, buildEnhDataRateTlv, getHtCapabilityIE}`
 - `IO80211AWDLPeer::{calculatePeerTimeDiff, shouldRemovePeerFromNDP}`
@@ -223,7 +223,7 @@ Peer manager functions that CH cites as the basis of its reverse engineering, al
 
 ### Where the AWDL stack lives on Sequoia
 
-The stack is in **IO80211Family**, just as on Tahoe. The 24H32 KC contains:
+The stack is in IO80211Family, just as on Tahoe. The 24H32 KC contains:
 
 - `IO80211AWDLProtocol` (metaclass);
 - `IO80211AWDLPeerManager` and `IO80211AWDLPeer`, with all the methods above;
@@ -232,13 +232,13 @@ The stack is in **IO80211Family**, just as on Tahoe. The 24H32 KC contains:
 
 UN's own code checks at runtime that the peer manager exists and that its class is `"IO80211AWDLPeerManager"` (UN `AirportItlwmV2.cpp:856-872, 918-920`).
 
-**Conclusion: the Tahoe architecture (the driver provides a subclass of `IO80211AWDLProtocol`; IO80211Family owns the peer manager, election and NDP) applies to Sequoia without fundamental changes.** The differences are in ABI (section 3), not in design.
+Conclusion: the Tahoe architecture (the driver provides a subclass of `IO80211AWDLProtocol`; IO80211Family owns the peer manager, election and NDP) applies to Sequoia without fundamental changes. The differences are in ABI (section 3), not in design.
 
 ### What UN did
 
-1. **Creation** (UN `AirportItlwmSkywalkInterface.cpp:380-467`): `setVIRTUAL_IF_CREATE` filters for role 6, picks the MAC and calls `IO80211Controller::attachVirtualInterface(&inf, &mac, 6, false)`. This calls the factory `AirportItlwm::createVirtualInterface` (UN `AirportItlwmV2.cpp:2354-2385`), which does `new ItlAwdlInterface` and `IO80211VirtualInterface::init(this, mac, 6, "awdl")`. Then come `IO80211VirtualInterface::start(instance)` and `probeRegisterResources(...)`, which creates a native `IOSkywalkPacketBufferPool` and native Tx/Rx queues and calls `registerEthernetInterface` (UN `AirportItlwmV2.cpp:1338-1400`). Finally `setAwdlInterface(awdl)`, which **CH does not do**, and `deferBSDAttach(false)`.
-2. **BSD:** it lets the native `IOSkywalkLegacyEthernet` create the `IOSkywalkLegacyEthernetInterface` awdl0. UN found that in 24H32 this class **does not call `ifnet_attach`**, and had to force `IONetworkInterface::attachToDataLinkLayer` by symbol, then hook in through an `iflt` filter (UN `AirportItlwmV2.cpp:45-66, 762-830, 2154-2200`).
-3. **Protocol:** it has its own AWDL engine inside the driver, in `itlwm/awdl/` (124 headers, about 11.8k lines), with a peer table, election, sync and ROC. RX is observed in `hal_iwm` (`itlwm/hal_iwm/mac80211.cpp:970+`). **It does not inject action frames into `IO80211AWDLPeerManager` via `bpfTapInput`.** It only publishes AW events (`postMessage` 41/43) and registers peers with the kernel through `ifnet_notice_node_presence_v2` (UN `AirportItlwmV2.cpp:~1060-1080`).
+1. **Creation** (UN `AirportItlwmSkywalkInterface.cpp:380-467`): `setVIRTUAL_IF_CREATE` filters for role 6, picks the MAC and calls `IO80211Controller::attachVirtualInterface(&inf, &mac, 6, false)`. This calls the factory `AirportItlwm::createVirtualInterface` (UN `AirportItlwmV2.cpp:2354-2385`), which does `new ItlAwdlInterface` and `IO80211VirtualInterface::init(this, mac, 6, "awdl")`. Then come `IO80211VirtualInterface::start(instance)` and `probeRegisterResources(...)`, which creates a native `IOSkywalkPacketBufferPool` and native Tx/Rx queues and calls `registerEthernetInterface` (UN `AirportItlwmV2.cpp:1338-1400`). Finally `setAwdlInterface(awdl)`, which CH does not do, and `deferBSDAttach(false)`.
+2. **BSD:** it lets the native `IOSkywalkLegacyEthernet` create the `IOSkywalkLegacyEthernetInterface` awdl0. UN found that in 24H32 this class does not call `ifnet_attach`, and had to force `IONetworkInterface::attachToDataLinkLayer` by symbol, then hook in through an `iflt` filter (UN `AirportItlwmV2.cpp:45-66, 762-830, 2154-2200`).
+3. **Protocol:** it has its own AWDL engine inside the driver, in `itlwm/awdl/` (124 headers, about 11.8k lines), with a peer table, election, sync and ROC. RX is observed in `hal_iwm` (`itlwm/hal_iwm/mac80211.cpp:970+`). It does not inject action frames into `IO80211AWDLPeerManager` via `bpfTapInput`. It only publishes AW events (`postMessage` 41/43) and registers peers with the kernel through `ifnet_notice_node_presence_v2` (UN `AirportItlwmV2.cpp:~1060-1080`).
 4. **Stated limitations:**
    - exclusive radio, i.e. no normal Wi-Fi during the session;
    - receive only, Mac → Hackintosh;
@@ -259,9 +259,9 @@ UN's own code checks at runtime that the peer manager exists and that its class 
 | Radio | Concurrent with the STA (P2P device / ROC alongside the association) | Exclusive |
 | Hardware | AX210 / `hal_iwx` | AC9560 / `hal_iwm` |
 
-**Assessment:** the Tahoe design **can** be mapped to Sequoia. UN took a different path because of its own choices (iwm, exclusive radio, probe-based approach), not because Sequoia required it. UN's evidence actually supports CH's path: the peer manager contract (AW events, layouts) is the same, and the `IOSkywalkLegacyEthernet` bridge UN used is broken in 24H32, which CH avoids by using its own `IOEthernetInterface`.
+**Assessment:** the Tahoe design can be mapped to Sequoia. UN took a different path because of its own choices (iwm, exclusive radio, probe-based approach), not because Sequoia required it. UN's evidence supports CH's path: the peer manager contract (AW events, layouts) is the same, and the `IOSkywalkLegacyEthernet` bridge UN used is broken in 24H32, which CH avoids by using its own `IOEthernetInterface`.
 
-**From UN's work, only these are reused:** the two `macOS15/` headers, the `setAwdlInterface` declaration, the 24H32 layout checks and the capability bit confirmation. The `itlwm/awdl` engine and `hal_iwm` are **not usable** for the AX210.
+Only these parts of UN's work are reused: the two `macOS15/` headers, the `setAwdlInterface` declaration, the 24H32 layout checks and the capability bit confirmation. The `itlwm/awdl` engine and `hal_iwm` are not usable for the AX210.
 
 ---
 
@@ -278,14 +278,14 @@ Nothing in `hal_iwx`/`net80211` depends on macOS. There is no reference to `__IO
    - `IWX_AX210_GP2_REG 0xd02c68` (`:9697`).
 
    The AX210 firmware in this tree is `iwlwifi-ty-a0-gf-a0-68.ucode`, the same for both targets.
-3. **Fixed firmware IDs:** `IWX_P2P_MAC_ID 1`, `PHY_IDX 1`, `STA_ID 3` (`:9050-9052`). These can collide if the STA ever uses MLO or a second MAC. Not OS-dependent.
+3. **Fixed firmware IDs:** `IWX_P2P_MAC_ID 1`, `PHY_IDX 1`, `STA_ID 3` (`:9050-9052`). These can collide if the STA ever uses MLO or a second MAC. They do not depend on the OS.
 4. **Effects on the STA when `ic_vendor_action_handler` is set** (only with `-itlawdl`):
    - the STA MAC starts accepting `IN_CONTROL_AND_MGMT` (`:8932`);
    - RX stops checking for duplicates on frames destined for awdl0 (`:5853+`);
    - `ieee80211_inputm` drops management frames from foreign BSSs (`ieee80211_input.c:339-372`).
 5. **`iwx_tvqm_enable_txq`** gained the `sta_id` parameter, defaulting to `IWX_STATION_ID`, and the `AIRPORT_VTD` path with `runAction`. It is the same on Sequoia, because that target also defines `AIRPORT_VTD`.
 
-   On AMD without VT-d: `ItlDma` falls back to "direct" mode when there is no mapper (`itl80211/ItlDma.cpp:38-49`). AWDL TX uses the existing `bus_dmamap_packet`, so it **adds no VT-d dependency**.
+   On AMD without VT-d: `ItlDma` falls back to "direct" mode when there is no mapper (`itl80211/ItlDma.cpp:38-49`). AWDL TX uses the existing `bus_dmamap_packet`, so it adds no VT-d dependency.
 6. The boot-args (`-itlawdlp2p`, `-itlawdlpromisc`, and in AirportItlwm `-itlawdl`, `-itlawdlaw`, `-itlawdllisten`, `-itlawdltx`, `-itlawdldata`, `-itlawdlnopeerlisten`, `itlawdllistench=`) are version-independent.
 
 ---
@@ -301,7 +301,7 @@ git clone https://github.com/acidanthera/MacKernelSDK MacKernelSDK
 git -C MacKernelSDK checkout 3f750085caa17ec3a7880f11c11bf4f48cd6a164
 ```
 
-Xcode is **not installed** on the test machine (`python3`/`nm` triggered `xcode-select`). Full Xcode must be installed and `sudo xcode-select -s /Applications/Xcode.app` run before building.
+Xcode is not installed on the test machine (`python3`/`nm` triggered `xcode-select`). Full Xcode must be installed and `sudo xcode-select -s /Applications/Xcode.app` run before building.
 
 > Status update: Xcode was installed later, and the port was built in all four Sequoia/Tahoe × Debug/Release configurations.
 
@@ -340,12 +340,12 @@ Create `AirportItlwm/AirportItlwmAWDLConfig.h` (or put it at the top of `Airport
 #endif
 ```
 
-Replace **exactly** the 11 guards in the section 2 table with `#if defined(AIRPORT_AWDL)`. Do not touch `AirportItlwmSkywalkInterface.hpp:35/93/104`.
+Replace exactly the 11 guards in the section 2 table with `#if defined(AIRPORT_AWDL)`. Do not touch `AirportItlwmSkywalkInterface.hpp:35/93/104`.
 
 ### Step 3: `AirportItlwmAWDLInterface.hpp`
 
-- Lines 16–17: `#include <Airport/IO80211VirtualInterface.h>` and `#include <Airport/IO80211AWDLProtocol.h>`, i.e. the wrappers.
-- Lines 28–32: the `extern "C"` declarations have the same mangled name on both versions. Keep them.
+- Lines 16 and 17: `#include <Airport/IO80211VirtualInterface.h>` and `#include <Airport/IO80211AWDLProtocol.h>`, i.e. the wrappers.
+- Lines 28 to 32: the `extern "C"` declarations have the same mangled name on both versions. Keep them.
 - Comments and `#endif` (`:579`): change "Tahoe" to "WCL".
 
 ### Step 4: `AirportItlwmAWDLInterface.cpp` (ABI shims)

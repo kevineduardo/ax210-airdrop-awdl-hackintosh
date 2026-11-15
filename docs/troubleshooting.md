@@ -16,7 +16,7 @@ Both outputs contain MAC addresses, network names and device names. Review them 
 
 ### The Mac does not appear in the iPhone's AirDrop list
 
-1. **BLE advertising.** `log show --last boot --predicate 'eventMessage CONTAINS "[advsets]"'` must show `all 6 patches applied` (15.8.1) or the per-page patch lines (Tahoe). If it says the UUID does not match, your macOS build is not in the table: see [porting-awdl-to-new-macos-versions.md](porting-awdl-to-new-macos-versions.md#6-bluetoolfixup-for-the-new-build).
+1. **BLE advertising.** `log show --last boot --predicate 'eventMessage CONTAINS "[advsets]"'` must show `all 6 patches applied` (15.8.1 and 26.7.2) or the per-page patch lines (26.4.1). A half-patched `bluetoothd` is worse than an unpatched one. If it says the UUID does not match, your macOS build is not in the table: see [porting-awdl-to-new-macos-versions.md](porting-awdl-to-new-macos-versions.md#6-bluetoolfixup-for-the-new-build).
 2. **Bluetooth on and working**: `system_profiler SPBluetoothDataType` shows the controller; IntelBluetoothFirmware and IntelBTPatcher are loaded.
 3. **`awdl0` exists**: `ifconfig awdl0`. If not, check that `-itlawdl` is in `boot-args` (`nvram boot-args`) and that the loaded AirportItlwm is this fork's build (`system_profiler SPAirPortDataType | grep Firmware` shows `-awdl-`).
 4. **AirDrop setting** on the Mac and on the iPhone: "Contacts Only" needs both devices signed in to iCloud with each other in Contacts; try "Everyone for 10 minutes" to rule this out.
@@ -32,11 +32,19 @@ tools/awdlctl/awdlctl show | grep -E 'AWDLTxPump|AWDLSyncMaster|AWDLPeerSync|AWD
 
 - `AWDLTxFwBusy` growing fast while you transfer: the pump is off or `itlawdllead` is too small; try `sudo tools/awdlctl/awdlctl pump on` and `lead 30000`.
 - `AWDLSyncMaster` says the Mac is master and `AWDLPeerSync` shows a non-zero slot offset: `follow` is off.
-- Access point on a DFS channel (52–144): the AWDL channel sequence then often avoids your home channel. Try the AP on 36–48 or 149–165 as a test.
+- Access point on a DFS channel (52 to 144): the AWDL channel sequence then often avoids your home channel. As a test, move the AP to 36 to 48 or 149 to 165.
 
 ### The Mac takes a long time to reappear after a transfer
 
 `AWDLDataMcast` should have a non-zero `rx` count. If it stays 0, you are on a build without the multicast fix.
+
+### Tahoe: AirDrop finds the Mac but transfers stall or crawl
+
+Check `sysctl net.filter_state net.link.generic.system.enable_netagent`. If it prints `pf` and `0`, OpenCore's `PowerTimeoutKernelPanic` quirk is on; turn it off (see [installation.md](installation.md#4-tahoe-only-two-opencore-settings)). Mac → iPhone over AWDL is slow on Tahoe even when everything is right (about 1 MB/s at best); see [test-results-tahoe.md](test-results-tahoe.md).
+
+### The Mac disappears from the iPhone's AirDrop list (Tahoe)
+
+Known issue, cause not found yet. Workaround: `killall sharingd` and open the AirDrop window in Finder.
 
 ### Kernel panic at boot
 

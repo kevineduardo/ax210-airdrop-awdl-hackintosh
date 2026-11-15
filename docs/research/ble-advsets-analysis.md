@@ -3,16 +3,16 @@
 *Engineering notes written during the port (November 2026). Line numbers refer to the tree at the time of writing; the modified files later gained a two-line license notice at the top, so numbers may be off by two.*
 
 Date: 2026-11-10 · Test machine: an AMD Ryzen 5600G desktop, macOS 15.8.1 (24H32), Darwin 24.6.0, x86_64, Intel AX210 (8087:0032).
-Loaded kexts: Lilu 1.7.2, IntelBTPatcher 2.4.0, BlueToolFixup 2.7.2 (acidanthera). The boot-args at the time had **neither** `-btlfxa2dpcheck` nor `-btlfxadvsets`.
+Loaded kexts: Lilu 1.7.2, IntelBTPatcher 2.4.0, BlueToolFixup 2.7.2 (acidanthera). The boot-args at the time had neither `-btlfxa2dpcheck` nor `-btlfxadvsets`.
 
 Sources analyzed:
 - a local checkout of crazyhulk/BlueToolFixup-FixA2DP-BLE@0fb661b (release `v2.7.3-advsets-0fb661b`)
 - a local checkout of acidanthera/BrcmPatchRAM@6538902 (master, "Bump version")
-- `/usr/sbin/bluetoothd` (this is where it lives on 15.8.1; it does **not** exist in `/usr/libexec`). Universal binary `x86_64 + arm64e`, 21 917 136 bytes, SHA-256 `52743bab…0bb14`. x86_64 slice: offset 0x4000, size 0xa89bb0. `__TEXT` vmaddr 0x100000000 = file offset 0 (VA = offset + 0x100000000).
+- `/usr/sbin/bluetoothd` (this is where it lives on 15.8.1; it does not exist in `/usr/libexec`). Universal binary `x86_64 + arm64e`, 21 917 136 bytes, SHA-256 `52743bab…0bb14`. x86_64 slice: offset 0x4000, size 0xa89bb0. `__TEXT` vmaddr 0x100000000 = file offset 0 (VA = offset + 0x100000000).
 
 Tools: `lipo -info`, `file`, `xxd` and small ad-hoc Perl scripts (slice extraction, masked search, RIP-relative xrefs, `E8` calls). No otool/Python.
 
-> **Methodology note:** Lilu applies user-space patches inside `cs_validate_page`, modifying the page in the *page cache* (UBC). Reading the file while `bluetoothd` is running therefore returns resident pages **already patched** by BlueToolFixup 2.7.2. Confirmed: at 0x1001b3a59 there are 8×`90` (the upstream patch `kBadChipsetCheck15_4` = `cmp ecx,5999; ja` → NOPs) and at 0x1000cd7f4 `81 FA 5C 0A 00 00 EB` (vendor patch `74→EB`). None of the advsets regions is touched by the current patches, so the bytes below are Apple's originals.
+> **Methodology note:** Lilu applies user-space patches inside `cs_validate_page`, modifying the page in the *page cache* (UBC). Reading the file while `bluetoothd` is running therefore returns resident pages already patched by BlueToolFixup 2.7.2. Confirmed: at 0x1001b3a59 there are 8×`90` (the upstream patch `kBadChipsetCheck15_4` = `cmp ecx,5999; ja` → NOPs) and at 0x1000cd7f4 `81 FA 5C 0A 00 00 EB` (vendor patch `74→EB`). None of the advsets regions is touched by the current patches, so the bytes below are Apple's originals.
 
 ---
 
@@ -28,7 +28,7 @@ Fork changes (vs. acidanthera master):
 | `kSpecAdvSetsCap*26`, `kExtScanCap*26`, `kLeEventMask*26`, `kAdvSetAddr*26`, `kExtCreateConn*26`, `kAdvSetAddrResend*26` | the six `-btlfxadvsets` patches (PR #40) |
 | `searchAndPatchWithMask` template | fixes a bug: it passed `replaceSize` as the size of the replace mask instead of `replaceMaskSize` (harmless when they are equal) |
 | `searchAndPatchNamedWithMask` | new helper that does `SYSLOG("[a2dpcheck] patched %s")` |
-| `patched_cs_validate_page` | `bluetoothd` branch: applies a2dpcheck (picks the pattern by `getKernelVersion()` ≥ Sonoma / ≥ Monterey) and the six advsets patches **with no version check and no mask** (exact `KernelPatcher::findAndReplace`) |
+| `patched_cs_validate_page` | `bluetoothd` branch: applies a2dpcheck (picks the pattern by `getKernelVersion()` ≥ Sonoma / ≥ Monterey) and the six advsets patches with no version check and no mask (exact `KernelPatcher::findAndReplace`) |
 | `pluginStart` | reads `-btlfxa2dpcheck` and `-btlfxadvsets`, logs a message |
 
 Notes on the mechanism: patches are applied page by page (`PAGE_SIZE` = 4 KiB), so a pattern that crosses a page boundary never matches; `findAndReplace` replaces the first occurrence per page. The advsets patterns include `rel32`/`disp32` displacements and structure offsets, so by construction they are only valid for one build (25E253).
@@ -37,17 +37,17 @@ Notes on the mechanism: patches are applied page by page (`PAGE_SIZE` = 4 KiB), 
 - Target: the gate in the A2DP Fast-Connect path that depends on `HCI_Read_Clock` ("Failed to read BT clock"); Intel controllers fail it and `bluetoothd` aborts audio (AirPods "connected but no sound").
 - 14+: `45 85 F6 74 25 48 8D 05 ?? ?? ?? ?? 48 8B 18` → `45 31 F6 EB 25 …` (`test r14d,r14d; je` → `xor r14d,r14d; jmp`).
 - 12/13: `85 DB 74 25 48 8D 05 ?? ?? ?? ?? 48 8B 18` → `31 DB EB 25 …`.
-- **On 15.8.1 it matches twice** (0x100229d2d and 0x1003ea091, different pages → both would be patched). Update: 0x1003ea091 is the intended gate ("Failed to read BT clock"); 0x100229d2d is a false positive in the PCIe firmware loader ("Unable to get firmware image file buffer"). Details and a proposed more specific pattern in [ble-advsets-sequoia-changes.md](ble-advsets-sequoia-changes.md).
+- On 15.8.1 it matches twice (0x100229d2d and 0x1003ea091, different pages → both would be patched). Update: 0x1003ea091 is the intended gate ("Failed to read BT clock"); 0x100229d2d is a false positive in the PCIe firmware loader ("Unable to get firmware image file buffer"). Details and a proposed more specific pattern in [ble-advsets-sequoia-changes.md](ble-advsets-sequoia-changes.md).
 
 ---
 
 ## 2. Does upstream already include `-btlfxa2dpcheck`?
 
-**No.** Checked in the local code and through the GitHub API (read-only):
-- acidanthera/BrcmPatchRAM PR **#38** (hexxyan, `fix-a2dp-fastconnect`, opened 2026-04-07): **open, not merged**.
-- PR **#40** (crazyhulk, `pr/btlfx-advsets`, 2026-11-09): open, not merged.
+No. Checked in the local code and through the GitHub API (read-only):
+- acidanthera/BrcmPatchRAM PR #38 (hexxyan, `fix-a2dp-fastconnect`, opened 2026-04-07): open, not merged.
+- PR #40 (crazyhulk, `pr/btlfx-advsets`, 2026-11-09): open, not merged.
 - PR #39 (trueToastedCode, sleep/wake for BrcmPatchRAM3 + native stack patches): open.
-- Latest upstream release: **2.7.2** (2026-03-20). Master @ 6538902 only bumps to 2.7.3, without a2dpcheck. No occurrence of `a2dp`/`fastconnect` in the acidanthera checkout.
+- Latest upstream release: 2.7.2 (2026-03-20). Master @ 6538902 only bumps to 2.7.3, without a2dpcheck. No occurrence of `a2dp`/`fastconnect` in the acidanthera checkout.
 
 ---
 
@@ -57,7 +57,7 @@ Context (26.4.1 and 15.8.1 have the same logic): `bluetoothd` decides "BT chip s
 
 Captured logs (not published) from the test machine confirm this state: `enableBTSpecAdvertisingSets=0 enableExtendedAdvertising=0 enableExtendedScanning=0 enableExtendedScanHCI=0 maxAdvHandles=4`.
 
-**Searching the x86_64 slice of 15.8.1 for the exact 26.4.1 patterns: 0/6 match.** But all six sites exist with the same structure and were re-derived (each with exactly 1 occurrence, within a single 4 KiB page):
+Searching the x86_64 slice of 15.8.1 for the exact 26.4.1 patterns gives 0/6 matches. All six sites exist, though, with the same structure and were re-derived (each with exactly 1 occurrence, within a single 4 KiB page):
 
 | # | What it bypasses | 26.4.1 (find → replace) | 15.8.1: site and original bytes | 15.8.1 replace |
 |---|---|---|---|---|
@@ -69,26 +69,26 @@ Captured logs (not published) from the test machine confirm this state: `enableB
 | 6 | Always resend the advertising set random address before enable (the Intel firmware forgets it when parameters are rewritten → enable fails with 0x12) | `8B 54 3A 03 33 94 08 11 0D 00 00 44 09 C2 0F 84 80 00 00 00` → `… 66 0F 1F 44 00 00` (je near → NOP6) | **0x1001ca5ac**: `8B 74 3E 03 33 B4 11 11 0D 00 00 44 09 C6 74 7F`, same cache offset `+0xd11`, but different registers and a **short `je`** (2 bytes). Next: `cmp byte [rip→0x100a44de0],0; je` and `call 0x1001c71ff` (wrapper for `LE_SetAdvertisingSetRandomAddress`) | `8B 74 3E 03 33 B4 11 11 0D 00 00 44 09 C6 66 90` |
 
 Observations:
-- The vtable slots shifted by exactly **+0x160** between 15.8.1 and 26.4.1 (0x860→0x9c0, 0x848→0x9a8), keeping the 0x18 distance between them. This is strong confirmation that they are the same methods.
+- The vtable slots shifted by exactly +0x160 between 15.8.1 and 26.4.1 (0x860→0x9c0, 0x848→0x9a8), keeping the 0x18 distance between them. This strongly confirms that they are the same methods.
 - The offset of the chipset field in the object changed (0x2f8 → 0x334), as did all `rel32`/`disp32` values; the logic is identical.
-- **The extended advertising/scanning path exists in full on 15.8.1**: `OI_HCI_CMD_LE_SetExtendedAdvertising{Parameters,Data,Enable}`, `LE_SetAdvertisingSetRandomAddress`, `LE_ClearAdvertisingSets`, `_HCIEventHandler_ExtendedAdvertisingReport`, `gEnableExtendedCreateConnectionCommand(V2)`, `DisableSpecSets`, "enableBTSpecAdvertisingSets cannot be false if enableExtendedAdvertising is true", `LE_InitMultipleAdvertising failed with status %!`, `THIRD_PARTY_DONGLE`, "Stack is not started, updateAdvertisement returning", `BTVCLinkAgent leSetExtended*` methods. Nothing structural is missing.
+- The extended advertising/scanning path exists in full on 15.8.1: `OI_HCI_CMD_LE_SetExtendedAdvertising{Parameters,Data,Enable}`, `LE_SetAdvertisingSetRandomAddress`, `LE_ClearAdvertisingSets`, `_HCIEventHandler_ExtendedAdvertisingReport`, `gEnableExtendedCreateConnectionCommand(V2)`, `DisableSpecSets`, "enableBTSpecAdvertisingSets cannot be false if enableExtendedAdvertising is true", `LE_InitMultipleAdvertising failed with status %!`, `THIRD_PARTY_DONGLE`, "Stack is not started, updateAdvertisement returning", `BTVCLinkAgent leSetExtended*` methods. Nothing structural is missing.
 
-Difficulty of re-deriving: **low**. It was done in this analysis with only Perl/xxd, anchoring on log strings (RIP-relative xrefs) and `E8` calls to global setters.
+Difficulty of re-deriving: low. It was done in this analysis with only Perl/xxd, anchoring on log strings (RIP-relative xrefs) and `E8` calls to global setters.
 
 ---
 
 ## 4. Recommendation
 
 ### Feasibility
-Porting the six patches to 15.8.1 (24H32) is **technically feasible**: all sites were found, they are unique and do not cross pages. The kext would need to be built (Xcode + Lilu SDK, on another machine or after installing Xcode).
+Porting the six patches to 15.8.1 (24H32) is technically feasible: all sites were found, they are unique and do not cross pages. The kext would need to be built (Xcode + Lilu SDK, on another machine or after installing Xcode).
 
-**But note the "AirDrop" goal:** crazyhulk's release says AirDrop also needs the AWDL build of AirportItlwm, and that build is **Tahoe only** (the commit explains that in macOS 26 the AWDL stack moved into IO80211Family; on 15.x AWDL lives inside the Broadcom Wi-Fi driver and itlwm does not implement it). On 15.8.1, with advsets ported, the most likely gain is BLE advertising/scan (Continuity, BLE discovery, fewer "Stack is not started", extended LE connection), **but not working AirDrop**. For real AirDrop the path is Tahoe 26.4.1 + BlueToolFixup advsets + AirportItlwm AWDL (both experimental), or a native Broadcom card.
+The "AirDrop" goal is a different matter: crazyhulk's release says AirDrop also needs the AWDL build of AirportItlwm, and that build is Tahoe only (the commit explains that in macOS 26 the AWDL stack moved into IO80211Family; on 15.x AWDL lives inside the Broadcom Wi-Fi driver and itlwm does not implement it). On 15.8.1, with advsets ported, the most likely gain is BLE advertising/scan (Continuity, BLE discovery, fewer "Stack is not started", extended LE connection), but not working AirDrop. For real AirDrop the path is Tahoe 26.4.1 + BlueToolFixup advsets + AirportItlwm AWDL (both experimental), or a native Broadcom card.
 
 > Status update: the AWDL analysis that followed found that on Sequoia the AWDL stack is also in IO80211Family (see [awdl-sequoia-port-analysis.md](awdl-sequoia-port-analysis.md)). AirportItlwm AWDL was ported to Sequoia, the advsets port was built and confirmed active on 15.8.1, and AirDrop iPhone→Mac and Mac→iPhone worked on Sequoia 15.8.1.
 
 ### Porting steps (without touching the system; everything via the kext)
 1. Fork `0fb661b`; add per-version tables (below) with the bytes from section 3.
-2. Build DEBUG; install on a **test** EFI (keep a known-good EFI), add `-btlfxadvsets` (and optionally `-btlfxdbg`).
+2. Build DEBUG; install on a test EFI (keep a known-good EFI), add `-btlfxadvsets` (and optionally `-btlfxdbg`).
 3. Verify: `log show --predicate 'sender == "BlueToolFixup" OR process == "kernel"' | grep advsets` → 6× "patched"; in `bluetoothd`: "BT chip support for BT Spec advertisingsets : enabled", `enableBTSpecAdvertisingSets=1 … enableExtendedScanning=1`, no `LE_InitMultipleAdvertising failed … 152`.
 4. Test: iPhone seeing the Mac (Continuity/Handoff), AirPods (A2DP + `-btlfxa2dpcheck`), BLE scan, sleep/wake cycle, and look for "Exceed max allowed consecutive command disallowed" / `bluetoothd` restarts.
 5. Introduce the patches gradually if something fails (1+2+3 first; then 5; then 4+6, which are specific to the Intel firmware).
@@ -125,9 +125,9 @@ else if (getKernelVersion() == KernelVersion::Sequoia) { advSets = kAdvSets24; a
 ```
 
 Practical rules:
-- The masked patterns above were verified to be **unique** on 15.8.1 (1 occurrence each); #1 and #2 cannot be masked (the slot is the only distinguishing part: with the slot masked there are 22 occurrences) → keep them exact per version.
+- The masked patterns above were verified to be unique on 15.8.1 (1 occurrence each); #1 and #2 cannot be masked (the slot is the only distinguishing part: with the slot masked there are 22 occurrences) → keep them exact per version.
 - For robustness against minor updates, mask `rel32`/`disp32` and field offsets, but include enough context bytes for uniqueness (validate with a masked search on each build's binary).
-- Count the applied patches and, once `bluetoothd` has started, log a warning if fewer than 6 (partial application is worse than none). Ideally "all or nothing", e.g. only enable #3–#6 after #1 has matched.
+- Count the applied patches and, once `bluetoothd` has started, log a warning if fewer than 6 (partial application is worse than none). Ideally "all or nothing", e.g. only enable #3 to #6 after #1 has matched.
 - Fix the log prefix (`searchAndPatchNamedWithMask` always says "[a2dpcheck]").
 - Also propose upstream that `-btlfxa2dpcheck` (PR #38) be accepted first; advsets (PR #40) depends on it in the branch history.
 

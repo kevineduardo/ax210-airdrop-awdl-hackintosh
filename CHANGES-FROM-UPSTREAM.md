@@ -28,7 +28,7 @@ Changes (November 2026):
 | Security | `AirportItlwmAWDLInterface.cpp` | Run-time AWDL switches (`setProperties`) require an administrator |
 | Identification | `AirportItlwm/WCL/Info.plist`, `WCL/Sequoia-Info.plist` | `CFBundleGetInfoString` names this fork. CI sets `GIT_COMMIT=-awdl-<commit>`, so the driver reports `itlwm: 2.4.0-awdl-<commit>`. Bundle identifier, class names and kext file name are unchanged on purpose, so the kext stays a drop-in replacement and cannot load next to another AirportItlwm |
 
-Further changes made while testing on macOS 26.7.2 Tahoe (25G332), 12–14 November 2026:
+Further changes made while testing on macOS 26.7.2 Tahoe (25G332), 12 to 14 November 2026:
 
 | Area | Files | Change |
 |---|---|---|
@@ -39,6 +39,7 @@ Further changes made while testing on macOS 26.7.2 Tahoe (25G332), 12–14 Novem
 | Output model | `AirportItlwmV2.cpp`, `AirportItlwmAWDLInterface.cpp` | Pull output model for `awdl0` with its own output thread, so the stack paces Apple's QUIC (`-itlawdlpush` for the old model) |
 | Listen dwells | `AirportItlwmAWDLInterface.cpp` | Default longest dwell 420 TU; optional short dwells while AWDL idles (`-itlawdlidledwell`) |
 | Infra statistics | `AirportItlwmV2.cpp`, `AirportItlwmSkywalkInterface.cpp`, `hal_iwx/*` | Infra packet counters by traffic class and channel load fed to IO80211Family; LQM snapshot with RSSI and CCA; firmware statistics v14 behind `-itlfwstats` |
+| Sequoia safety | `AirportItlwmAWDLInterface.cpp` | The calls that use Tahoe-only vtable slots or message layouts (`findPeer`, `updateInterfaceDataStats`, `cachePeer`, peer-cache completion message 0x33) are compiled out of the Sequoia build |
 | Release logging | `hal_iwx/ItlIwx.cpp` | `iwx_debug` 0 in Release builds |
 | BlueToolFixup | `BrcmPatchRAM/BlueToolFixup.cpp` | Patch table for 26.7.2 (25G332, UUID-gated); `bluetoothd` recognised by vnode identity (path lookup only as a fallback); late start: if Lilu's route arrives after `bluetoothd` started, restart it with its pages evicted so the patches apply; statistics line 30 s after start |
 

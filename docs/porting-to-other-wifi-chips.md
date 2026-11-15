@@ -2,7 +2,7 @@
 
 This is a plan for doing what this project did, on different hardware. It uses a Realtek PCIe card (for example RTL8852BE / RTL8852CE, Wi-Fi 6/6E) as the running example, but the steps are the same for MediaTek or Qualcomm Atheros chips.
 
-Be realistic about the size of the job. The Intel work stands on years of OpenIntelWireless effort: a complete 802.11 stack port and a driver for the chip that already worked with macOS before AWDL was attempted. For a chip with no macOS driver at all, step 1 alone is a large project.
+This is a large job. The Intel work stands on years of OpenIntelWireless effort: a complete 802.11 stack port and a driver for the chip that already worked with macOS before AWDL was attempted. For a chip with no macOS driver at all, step 1 alone is a large project.
 
 ## The pieces
 
@@ -10,7 +10,7 @@ Be realistic about the size of the job. The Intel work stands on years of OpenIn
 macOS IO80211Family  ←→  glue (AirportItlwm*)  ←→  802.11 stack (itl80211 = OpenBSD net80211)  ←→  HAL (ItlIwx…)  ←→  chip firmware
 ```
 
-Only the HAL is chip-specific. The glue, the 802.11 stack and the AWDL timeline in this repo can be reused as they are. So the plan is: **write a new HAL**, first for normal Wi-Fi, then add the AWDL callbacks.
+Only the HAL is chip-specific. The glue, the 802.11 stack and the AWDL timeline in this repo can be reused as they are. The plan is to write a new HAL, first for normal Wi-Fi and then with the AWDL callbacks.
 
 ## Step 1. Pick a source driver to port
 
@@ -39,11 +39,11 @@ AWDL needs these capabilities from the chip and its firmware. Check each one in 
 
 | Need | Why | What to look for in the Linux driver |
 |---|---|---|
-| **Off-channel dwells while associated**, with a precise start notification | AWDL slots are 16 TU long and move between channels; the station link stays up on the home channel | `remain_on_channel` / `cancel_remain_on_channel` ops; firmware "ROC" or "scan offload" with start/end events |
-| **A second MAC address** that the chip ACKs | Peers send unicast to `awdl0`'s own MAC | P2P-device or multi-vif support (`NL80211_IFTYPE_P2P_DEVICE`, "port"/"MACID" concepts in Realtek firmware) |
-| **Receive frames for a foreign BSSID** | AWDL frames use the AWDL BSSID `00:25:00:ff:94:73`, not your AP's | RX filter control / promiscuous or monitor-like filter per vif |
-| **Transmit raw management/action frames and data on a chosen channel**, with TX status | PSF/MI frames and AirDrop data | `mgmt_tx` support, per-frame TX descriptors with rate/retry control |
-| **TX timing you can observe** | Frames must leave inside the peer's slot | Some way to know "the radio is on channel X now" (dwell state, firmware event, or a timestamp) |
+| Off-channel dwells while associated, with a precise start notification | AWDL slots are 16 TU long and move between channels; the station link stays up on the home channel | `remain_on_channel` / `cancel_remain_on_channel` ops; firmware "ROC" or "scan offload" with start/end events |
+| A second MAC address that the chip ACKs | Peers send unicast to `awdl0`'s own MAC | P2P-device or multi-vif support (`NL80211_IFTYPE_P2P_DEVICE`, "port"/"MACID" concepts in Realtek firmware) |
+| Receive frames for a foreign BSSID | AWDL frames use the AWDL BSSID `00:25:00:ff:94:73`, not your AP's | RX filter control / promiscuous or monitor-like filter per vif |
+| Transmit raw management/action frames and data on a chosen channel, with TX status | PSF/MI frames and AirDrop data | `mgmt_tx` support, per-frame TX descriptors with rate/retry control |
+| TX timing you can observe | Frames must leave inside the peer's slot | Some way to know "the radio is on channel X now" (dwell state, firmware event, or a timestamp) |
 | A reliable host clock to align to peers | The AW timeline is kept on the host | TSF read or precise host timestamps on RX |
 
 If the chip has P2P-device + ROC + mgmt TX in Linux, it can almost certainly do AWDL with this design. If it can only do one channel at a time with no off-channel support while associated, AWDL is only possible while disconnected from the AP.
@@ -71,11 +71,11 @@ Map them to the chip:
 | `ic_awdl_want_data` | `IN_PROMISC` on the P2P MAC filter | RX filter configuration for the second port (`rtw89_*_set_rx_filter`) |
 | Second MAC address | MAC context with `ic_awdl_addr` | A second "port" / MACID with its own address |
 
-Start with RX only (`-itlawdl -itlawdlaw -itlawdllisten` and your listen implementation, `-itlawdlnoinject` while bringing it up). When `awdl0` sees peers, add TX, then data. The counters in `ieee80211com` (`ic_awdl_roc_*`, `ic_awdl_tx_*`) are shown by `awdlctl show` and `scripts/monitor-awdl.sh`; fill them from the start, they are how every problem in this project was found.
+Start with RX only (`-itlawdl -itlawdlaw -itlawdllisten` and your listen implementation, `-itlawdlnoinject` while bringing it up). When `awdl0` sees peers, add TX, then data. The counters in `ieee80211com` (`ic_awdl_roc_*`, `ic_awdl_tx_*`) are shown by `awdlctl show` and `scripts/monitor-awdl.sh`; fill them from the start, because they are how every problem in this project was found.
 
 ## Step 5. Measure, then tune
 
-What made AirDrop work on Intel was measurement, not guessing:
+Measurements are what made AirDrop work on Intel:
 
 - histogram of "dwell requested → dwell really started" (`AWDLRocDelayHistMs`): Intel's firmware was late by 10 to 75 ms half of the time, which is why the TX pump exists;
 - TX outcome by dwell state and band;

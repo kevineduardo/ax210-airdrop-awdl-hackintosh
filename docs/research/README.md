@@ -11,5 +11,8 @@ Notes written while porting AWDL to Sequoia and making AirDrop work. They are de
 | [airdrop-master-election-and-multicast.md](airdrop-master-election-and-multicast.md) | AirDrop failing when the Mac is AWDL master; multicast not reaching `awdl0` |
 | [ble-advsets-analysis.md](ble-advsets-analysis.md) | How BLE advertising sets are gated in `bluetoothd` and how the patches work |
 | [ble-advsets-sequoia-changes.md](ble-advsets-sequoia-changes.md) | The UUID-checked patch table for macOS 15.8.1 |
+| [real-mac-reference.md](real-mac-reference.md) | Baseline AWDL values from a real Mac (states, sequences, latency, AirDrop throughput) |
+
+Newer, topic-based notes (driver contract, AWDL timing, pf/QUIC, OpenCore patches) are in [`../reference/`](../reference/).
 
 Line numbers in these notes refer to the tree at the time of writing.

@@ -7,12 +7,12 @@ Log excerpts used here come from captured logs (not published).
 
 ## Summary
 
-- **The failure is not caused by the pump being on from boot.** What changed between the two boots was the outcome of the **AWDL master election**:
+- The pump being on from boot did not cause the failure. What changed between the two boots was the outcome of the AWDL master election:
   - in the success, the iPhone was master and the Mac followed its timeline;
-  - in the failure, the Mac became master (metric 539 vs ~530 for the iPhone) and the iPhone did **not** start following the Mac's timeline.
-- With two different timelines, the Mac's **Low Power** sequence (3 active slots out of 16) no longer has any slot in common with the iPhone. The Discovery and Idle sequences (6–8 active slots) still overlap by chance.
+  - in the failure, the Mac became master (metric 539 vs ~530 for the iPhone) and the iPhone did not start following the Mac's timeline.
+- With two different timelines, the Mac's Low Power sequence (3 active slots out of 16) no longer has any slot in common with the iPhone. The Discovery and Idle sequences (6 to 8 active slots) still overlap by chance.
 - In the failure, DISCOVER and ASK went through in Discovery/Idle. The Mac switched to Low Power 0.83 s after the accept and the UPLOAD never arrived.
-- This is the main hypothesis, **not proven**: kext 7F4D5A99 does not publish the offset between timelines. It is based on the election (proven by the logs), the dwell distribution (inference) and TCP behaviour.
+- This is the main hypothesis, and it is not proven: kext 7F4D5A99 does not publish the offset between timelines. It is based on the election (proven by the logs), the dwell distribution (inference) and TCP behaviour.
 - Driver changes:
   - new diagnostic `AWDLPeerSync`, always on, which measures the offset and shows who the peer says is master;
   - switch `-itlawdlfollow` / `awdlctl follow on|off` (off by default): when the Mac is master and the peer does not follow it, the Mac adopts the peer's timeline;
@@ -38,7 +38,7 @@ Log excerpts used here come from captured logs (not published).
 | ASK → accept | 31.520 → 33.459 | 09.433 → 12.172 |
 | "UPLOAD connection is not active" | **yes, ×4** | yes, ×4 |
 | UPLOAD received | 33.768 (0.31 s after the accept) | **never** (connection closed for inactivity at 00:38:42) |
-| End | Importing END 38.362 | — |
+| End | Importing END 38.362 | n/a |
 
 Mac sequences (kernel `AWDL ON:` line):
 
@@ -68,17 +68,17 @@ The message appears in all three attempts, including the successful one, always 
 Reading the failure:
 
 - Up to the accept the connection was fine (48 kB of ASK received, rtt 4 ms, 0 retransmissions).
-- The ASK response was retransmitted **once** and then acknowledged. Had it not been acknowledged, there would have been 4 or more retransmissions in 30 s.
-- So the iPhone did receive the response, a few hundred ms late, and from then on **nothing from the iPhone reached the Mac** for 30 s.
+- The ASK response was retransmitted once and then acknowledged. Had it not been acknowledged, there would have been 4 or more retransmissions in 30 s.
+- So the iPhone did receive the response, a few hundred ms late, and from then on nothing from the iPhone reached the Mac for 30 s.
 
 ### 1.4 Outgoing Mac → iPhone connections in the failing boot
 
 With the Finder AirDrop window open, `sharingd` tried to connect to the iPhone (`IPv6#5557b140`, the same address as the incoming connections) every 5 s:
 
 - 00:36:32 → 00:38:01, Mac master in Low Power: 17 attempts. 10 stayed in `SYN_SENT` (`SYN in/out 0/10`); the others connected but stalled in TLS (for example, 0 bytes received and 6 retransmissions).
-- The attempt started at 00:38:01.054 only connected at **00:38:04.673, 43 ms after** the Mac left Low Power for Discovery, and completed TLS in 35 ms.
+- The attempt started at 00:38:01.054 only connected at 00:38:04.673, 43 ms after the Mac left Low Power for Discovery, and completed TLS in 35 ms.
 
-In the successful boot (Mac slave, Low Power), the equivalent outgoing connections connected in 0.1–1.6 s.
+In the successful boot (Mac slave, Low Power), the equivalent outgoing connections connected in 0.1 to 1.6 s.
 
 ### 1.5 Driver counters
 
@@ -86,7 +86,7 @@ In the successful boot (Mac slave, Low Power), the equivalent outgoing connectio
 |---|---|---|
 | Dwells in peer slots / dwells requested | 269 / 605 (44 %, at 00:27) | **862 / 984 (88 %)** |
 | Dwells per channel 6 / 44 / 149 | no TX on 149 during the transfer (`unii3` stuck at 97) | 48 % / 31 % / 21 % |
-| `AWDLPeerPredHit/Miss` | — | 358 / 1 |
+| `AWDLPeerPredHit/Miss` | n/a | 358 / 1 |
 | `AWDLTxOkFailByBand` | 2g 582/2, unii1 2760/3, unii3 97/0 | 2g 376/31, unii1 1093/12, unii3 499/10 |
 | Data latency < 5 ms | 942 / 991 | 178 / 331 |
 | Latency ≥ 1 s / maximum | 10 / 77.8 s (before the pump) | 24 / 25.9 s |
@@ -96,20 +96,20 @@ In the successful boot (Mac slave, Low Power), the equivalent outgoing connectio
 - The driver predicted the iPhone's channel well (358 hits, 1 miss), so the iPhone's timeline was measured correctly.
 - `scheduleOwnListen` was simulated for the 16 possible index offsets between the two Low Power sequences:
   - offset 0 (aligned): 25 % of dwells in peer slots, channels 6/44 at 50/50;
-  - offset +1 or +9: **100 %** in peer slots, channels 6/44/149 at 50/25/25.
+  - offset +1 or +9: 100 % in peer slots, channels 6/44/149 at 50/25/25.
 - The observed values (88 %, 48/31/21) match offset +1 or +9. **Inference:** the iPhone's slot numbering did not match the Mac's, and the Mac's own slots (2, 8, 10) were almost never visited.
 - In today's live test (a neighbouring device at −80 dBm), the distribution matches offset 15. That peer is not aligned with the master Mac either.
-- TX failures are spread across all three bands. It is not a single-band problem.
+- TX failures are spread across all three bands, so the problem is not specific to one band.
 
 ---
 
 ## 2. Probable cause
 
-1. The Mac's election metric is drawn at random each time AWDL is activated (514 in one boot, 539 in the other). The iPhone's is around 530–537. When the Mac's is higher, the Mac's IO80211 stays master.
-2. The iPhone does not adopt the Mac's timeline. Why is **not proven**. Hypothesis: on a real Mac the election is done by the Broadcom firmware, which first compares the master counter (the iPhone's was ~2500, the Mac's 3–60) and only then the metric; the host IO80211 compares only the metric. This rule is recalled from OWL (`election.c`) and was not checked against the code.
+1. The Mac's election metric is drawn at random each time AWDL is activated (514 in one boot, 539 in the other). The iPhone's is around 530 to 537. When the Mac's is higher, the Mac's IO80211 stays master.
+2. The iPhone does not adopt the Mac's timeline. Why is not proven. Hypothesis: on a real Mac the election is done by the Broadcom firmware, which first compares the master counter (the iPhone's was ~2500, the Mac's 3 to 60) and only then the metric; the host IO80211 compares only the metric. This rule is recalled from OWL (`election.c`) and was not checked against the code.
 3. Two timelines remain. A peer only transmits to us in slots where its channel equals the one we advertise for that slot:
    - in Low Power (slots 2, 8 and 10; slot 0 is channel 100, where the driver does not even listen for AWDL), with an index offset there is no common slot;
-   - in Discovery/Idle (6–8 slots in runs of 3–4) there is overlap by chance.
+   - in Discovery/Idle (6 to 8 slots in runs of 3 to 4) there is overlap by chance.
 4. The driver made this worse: dwells in the peer's slots occupied the radio, and our own slots, which are the ones we advertise, were left unvisited.
 
 What this explains:
@@ -128,7 +128,7 @@ What is still needed to prove it: see `slotoff`/`err` and `peermaster` in `AWDLP
 
 | Hypothesis | Verdict | Evidence |
 |---|---|---|
-| Pump from boot ≠ pump at runtime | **Rejected** | Same code path; `fTxPump` and `fListenLeadUs` are read in `init()` before the first dwell; counters at zero; `norun 1`; ROC delay the same in both boots (64–65 % below 5 ms) |
+| Pump from boot ≠ pump at runtime | **Rejected** | Same code path; `fTxPump` and `fListenLeadUs` are read in `init()` before the first dwell; counters at zero; `norun 1`; ROC delay the same in both boots (64 to 65 % below 5 ms) |
 | Mac master without the iPhone following it | **Main** | Sections 1 and 2 |
 | Sequence change mid-transfer (Idle → Low Power) | Trigger, not cause | In stable Low Power with the Mac as slave the transfer completed |
 | Frames stuck while the peer is "away" (25.9 s) | **Real bug, fixed**; not the direct cause | `peerChannelAt()` had no age limit: a peer no longer heard kept blocking the queue. The ≥ 1 s latencies in this boot come mostly from the SYNs of the failed outgoing connections |
@@ -139,7 +139,7 @@ What is still needed to prove it: see `slotoff`/`err` and `peermaster` in `AWDLP
 | Accept timing in `sharingd` | Rejected | Manual accept in all three cases (1.9 s, 2.7 s, 3.6 s); same message sequence |
 | Wrong peer followed (there are AWDL neighbours) | Latent, **fixed** | In this boot the followed peer was the iPhone (`AWDLPeerUpdates 387` = frames from the iPhone). But the driver only switched peer after 10 s of silence from the current one, and right now it is following the neighbour |
 
-Problems found and **not** changed (left for after the next test):
+Problems found and not changed (left for after the next test):
 
 - `pumpCanSend` treats "peer in a slot 0" as "can send". Unicast sent there only arrives if the peer's infra channel is the dwell channel. This may explain part of `TxFwFail`.
 - A frame accepted by the firmware at the end of a dwell goes out in the next dwell, possibly on another channel. For PSF/MI this means stale sync parameters.
@@ -154,8 +154,8 @@ Files: `AirportItlwm/AirportItlwmAWDLInterface.{cpp,hpp}` and `tools/awdlctl.c`.
 
 ### 4.1 Behind a switch (off by default)
 
-- **`-itlawdlfollow`** (boot-arg) / **`awdlctl follow on|off`** (runtime, `AWDLFollowPeerOn`).
-- Acts only when: the Mac is master, the followed peer is misaligned (different slot index or boundary more than 6 ms off) in 3 consecutive frames, and the peer does **not** name the Mac as master.
+- `-itlawdlfollow` (boot-arg) / `awdlctl follow on|off` (runtime, `AWDLFollowPeerOn`).
+- Acts only when: the Mac is master, the followed peer is misaligned (different slot index or boundary more than 6 ms off) in 3 consecutive frames, and the peer does not name the Mac as master.
 - In that case it adopts the peer's timeline (`fRefUs`/`fRefSeq`), as `syncFromFrame` already does with a real master, and re-plans the dwells.
 - If the peer names the Mac as master and is still misaligned, it does nothing (avoids mutual chasing) and counts it in `followsusmis`.
 
@@ -208,7 +208,7 @@ Note: the build replaced `build/dd-port/Build/Products/Release/Sequoia/AirportIt
 ### 5.1 Setup
 
 - Kext: `build/dd-port/Build/Products/Release/Sequoia/AirportItlwm.kext` (UUID `0C0630E7`).
-- Boot-args: the current ones plus **`-itlawdlfollow`**:
+- Boot-args: the current ones plus `-itlawdlfollow`:
 
 ```
 -v keepsyms=1 debug=0x100 -btlfxadvsets -itlawdl -itlawdlaw -itlawdllisten -itlawdlp2p -itlawdltx -itlawdldata -itlawdlpromisc -itlawdltxpump itlawdllead=30000 -itlawdlfollow
@@ -270,7 +270,7 @@ If a panic appears or infra Wi-Fi degrades, go back to the test 7 kext.
 ### 7.1 Test 8 result
 
 - Kext `0C0630E7`, boot-args with `-itlawdlfollow`. Captured logs (not published).
-- iPhone → Mac: 2 out of 2 successful, with the **Mac as MASTER** (metric 536). `adopts 4`, `slotoff 0`, `peermaster` = the iPhone itself.
+- iPhone → Mac: 2 out of 2 successful, with the Mac as MASTER (metric 536). `adopts 4`, `slotoff 0`, `peermaster` = the iPhone itself.
 - This confirms section 2: the iPhone does not elect the Mac (it advertises itself as master) and the transfer goes through when the Mac adopts its timeline.
 - The A/B with `follow off` in the same boot is still missing to close the causality.
 
@@ -287,8 +287,8 @@ Timeline after the 1st transfer (`logstream.txt` and `awdl0.pcap` from the captu
 | 02:12:28.2 | −0.7 s | AirDrop BLE starts advertising again (181 ms) |
 | 02:12:28.934 | 0 | Importing END |
 | 02:12:30.000 | +1.1 s | Mac switches to Low Power; the AirDrop Bonjour server stays active |
-| 02:12:36.0–36.3 | +7.1–7.4 s | iPhone "absent" and immediately "present" (its AWDL restarted: share sheet reopened, probably) |
-| 02:12:36 → 02:13:05 | | **29 s without any SYN or DISCOVER from the iPhone** |
+| 02:12:36.0 to 36.3 | +7.1 to 7.4 s | iPhone "absent" and immediately "present" (its AWDL restarted: share sheet reopened, probably) |
+| 02:12:36 → 02:13:05 | | 29 s without any SYN or DISCOVER from the iPhone |
 | 02:13:05.870 | +36.9 s | `Discoverable mode changed` → Bonjour server stops |
 | 02:13:08.462 | +39.5 s | Bonjour server starts; mDNS announcements at 09.400 and 10.400; Discovery sequence at 09.151 |
 | 02:13:10.494 | +41.6 s | SYN from the iPhone on port 8770 |
@@ -298,17 +298,17 @@ After the 2nd transfer there was no further contact from the iPhone in the remai
 
 Facts:
 
-1. **awdl0 receives no multicast at all.** In `awdl0.pcap` (1760 packets, 68 s) there are 29 group packets sent by the Mac (mDNS to `ff02::fb`) and **0 received**. All incoming packets are unicast to the awdl0 MAC.
+1. awdl0 receives no multicast at all. In `awdl0.pcap` (1760 packets, 68 s) there are 29 group packets sent by the Mac (mDNS to `ff02::fb`) and 0 received. All incoming packets are unicast to the awdl0 MAC.
 2. The net80211 `wrongdir` counter rises in parallel (34 at the end of the capture, 47 at 02:19). It counts data frames without DS bits arriving at the station: the format of AWDL group data frames.
 3. In the code, `ieee80211_input()` only delivered to awdl0 frames with `addr1 == ic_awdl_addr`. Group frames (`addr1` multicast, `addr3` = AWDL BSSID `00:25:00:ff:94:73`) went down the station path and were dropped there.
-4. The iPhone only contacted the Mac again 2.0 s after the Bonjour server restarted, i.e. after an **unsolicited announcement** from the Mac and the switch to Discovery. The first discovery of each session happens the same way (announcements at 02:12:21.7–23.8, DISCOVER at 22.1).
+4. The iPhone only contacted the Mac again 2.0 s after the Bonjour server restarted, i.e. after an unsolicited announcement from the Mac and the switch to Discovery. The first discovery of each session happens the same way (announcements at 02:12:21.7 to 23.8, DISCOVER at 22.1).
 5. BLE is not the problem: advertising resumed before the transfer ended.
 
 ### 7.4 Probable cause
 
 The Mac never hears the iPhone's mDNS queries (`PTR _airdrop._tcp.local` over multicast), so `mDNSResponder` never answers them. The iPhone only learns about the service when the Mac announces it on its own, and that only happens when `sharingd` (re)starts the Bonjour server. After a transfer the server keeps running, there is no new announcement, and the iPhone's query goes unanswered until something restarts the server.
 
-Confidence: the RX defect is proven (pcap and code). That it is **the** cause of the delay is inference; the test in section 7.7 measures it directly.
+Confidence: the RX defect is proven (pcap and code). That it causes the delay is inference; the test in section 7.7 measures it directly.
 
 Alternative hypotheses, in order:
 
@@ -363,7 +363,7 @@ Clean build, all four `BUILD SUCCEEDED`. Not tested on hardware.
 
 ### 7.7 `monitor-awdl.sh`
 
-- New section in `summary.md`, **"Reappearance after each transfer"**. For each transfer end (`Importing END` on receive, `Received UPLOAD response` on send) it shows:
+- New section in `summary.md`, "Reappearance after each transfer". For each transfer end (`Importing END` on receive, `Received UPLOAD response` on send) it shows:
   - time to the first incoming SYN on awdl0 port 8770;
   - time to the next DISCOVER and the next ASK;
   - what happened in the interval (Bonjour server, discovery mode, BLE, sequence, peer presence, election);

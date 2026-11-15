@@ -4,39 +4,55 @@
 [![Release](https://img.shields.io/github/v/release/kevineduardo/ax210-airdrop-awdl-hackintosh?include_prereleases)](https://github.com/kevineduardo/ax210-airdrop-awdl-hackintosh/releases)
 [![License: GPL-2.0 (kexts) / MIT (tools, docs)](https://img.shields.io/badge/license-GPL--2.0%20%7C%20MIT-blue)](#license)
 
-Native Wi-Fi, **AWDL** (Apple Wireless Direct Link) and **AirDrop** for the **Intel Wi-Fi 6E AX210** on a hackintosh, through macOS's own Wi-Fi stack. No HeliPort, no USB dongle, no Broadcom card swap.
+Native Wi-Fi, AWDL (Apple Wireless Direct Link) and AirDrop for the Intel Wi-Fi 6E AX210 on a hackintosh, through macOS's own Wi-Fi stack. It works without HeliPort, a USB dongle or a Broadcom card swap.
 
-This is a fork of [AirportItlwm](https://github.com/OpenIntelWireless/itlwm) (OpenIntelWireless, via laobamac and crazyhulk) that brings crazyhulk's experimental Tahoe AWDL code to **macOS 15 Sequoia** and fixes what kept AirDrop transfers from finishing. It ships with a [BlueToolFixup](https://github.com/acidanthera/BrcmPatchRAM) build that turns on BLE advertising sets, so iPhones can find the Mac in the AirDrop sheet.
+This is a fork of [AirportItlwm](https://github.com/OpenIntelWireless/itlwm) (OpenIntelWireless, via laobamac and crazyhulk). crazyhulk wrote the first experimental AWDL code for Tahoe; this fork ports it to macOS 15 Sequoia, fixes what kept AirDrop transfers from finishing, and on macOS 26 Tahoe adds the pieces Apple's Wi-Fi stack expects from a real driver (peer cache, data statistics, QUIC pacing). It ships with a [BlueToolFixup](https://github.com/acidanthera/BrcmPatchRAM) build that turns on BLE advertising sets, so iPhones can find the Mac in the AirDrop sheet.
 
-> **Status: experimental beta.** AirDrop works in both directions on the test machine (Sequoia 15.8.1, AX210), and the Tahoe build has been tested on hardware too. Read [what is tested](#what-works) before you install it, and keep a known-good EFI on a USB stick.
+> **Status: experimental beta.** AirDrop works in both directions on the test machine, first on Sequoia 15.8.1 and then on Tahoe 26.7.2. Read [what is tested](#what-works) before you install it, and keep a known-good EFI on a USB stick.
 
 ## What works
 
-Tested on an AMD Ryzen 5 5600G desktop with an Intel AX210 (PCIe, Bluetooth over USB), SMBIOS MacPro7,1, OpenCore 1.0.8, **macOS 15.8.1 Sequoia (24H32)**.
+One test machine: AMD Ryzen 5 5600G desktop, Intel AX210 (PCIe, Bluetooth over USB), SMBIOS MacPro7,1, OpenCore 1.0.8. It ran Sequoia 15.8.1 first and Tahoe 26.7.2 later.
+
+### Tahoe 26.7.2 (25G332), current release
+
+| Feature | Status | Measured |
+|---|---|---|
+| Wi-Fi through the native macOS stack | Works | `networkQuality` about 200 Mbps down / 106 Mbps up |
+| Wi-Fi with AWDL on | Works | gateway ping 17 to 20 ms with an iPhone nearby (a real Mac: 19 ms) |
+| AirDrop iPhone → Mac | Works | 12 MB in 3.1 to 3.7 s; on the same network the file goes over Wi-Fi, not AWDL |
+| AirDrop Mac → iPhone | Works, slow | 12 MB in about 12 s (1 MB/s) or 38 to 49 s, depending on the AWDL schedule |
+| AWDL as master and as slave | Works | complete transfers in both roles |
+| QUIC over `awdl0` | Works | 0 timing errors per transfer; needs the OpenCore change in [installation](docs/installation.md#4-tahoe-only-two-opencore-settings) |
+| AirDrop discovery | Works, with failures | a few seconds when it works; the Mac sometimes drops out of the iPhone's list (workaround: `killall sharingd`) |
+| BLE advertising sets | Works | all six patches applied in six boots in a row |
+| Large files, sleep/wake, AirPods and other BT devices, Handoff and other Apple ID features | Not tested yet | |
+
+Details and open problems: [docs/test-results-tahoe.md](docs/test-results-tahoe.md).
+
+### Sequoia 15.8.1 (24H32)
 
 | Feature | Status |
 |---|---|
 | Wi-Fi through the native macOS stack (5 GHz, 802.11ac 80 MHz), with AWDL on | Works |
-| `awdl0` up, AWDL peers, Bonjour `_airdrop._tcp` on `awdl0` | Works |
-| AirDrop iPhone → Mac (photos, up to ~1 MB), Mac as AWDL master or slave | Works (4 of 4 in the last two test boots, with `-itlawdltxpump` and `-itlawdlfollow`) |
+| AirDrop iPhone → Mac (photos up to about 1 MB), Mac as AWDL master or slave | Works (4 of 4 in the last two test boots) |
 | AirDrop Mac → iPhone (small file) | Works |
-| Mac reappears in the iPhone's AirDrop list after a transfer | Works (6 to 9 s, including reopening the share sheet) |
-| Bluetooth controller and BLE advertising sets (AirDrop/Handoff discovery) | Works |
-| Large files (> 500 MB), many transfers in a row, Mac ↔ Mac | Not tested yet |
-| Handoff, Universal Clipboard, AirPlay to Mac, Sidecar, Universal Control | Not tested yet |
-| Sleep/wake, 24 h stability, AirPods and other BT devices | Not tested yet |
+| Mac reappears in the iPhone's AirDrop list after a transfer | Works (6 to 9 s) |
+| BLE advertising sets | Works |
+
+These results are for the [v1.0.0-beta.1](https://github.com/kevineduardo/ax210-airdrop-awdl-hackintosh/releases/tag/v1.0.0-beta.1) Sequoia kext. Later releases also carry the Tahoe fixes into the Sequoia build (with the Tahoe-only kernel calls compiled out); that combination has not been tested on Sequoia hardware yet. Details: [docs/test-results.md](docs/test-results.md).
 
 ### macOS versions
 
 | macOS | Wi-Fi | AWDL / AirDrop | Notes |
 |---|---|---|---|
-| 15 **Sequoia** | Yes | **Yes, tested on 15.8.1** | AWDL layouts checked against the 15.8.1 kernel. Other 15.x builds may have different IO80211Family vtables (15.0.1 does): start with `-itlawdlnoinject` and see [porting to a new macOS build](docs/porting-awdl-to-new-macos-versions.md). |
-| 26 **Tahoe** | Yes | **Yes, tested on hardware by the maintainer** | AWDL code is crazyhulk's original plus our fixes. The BLE advsets table targets 26.4.1. More reports from other machines are welcome. |
-| 14 **Sonoma** and older | Use upstream [itlwm releases](https://github.com/OpenIntelWireless/itlwm/releases) | **No** | AirportItlwm's Sonoma builds use an older IO80211 interface and the AWDL code is only built for Sequoia and Tahoe. See [what a Sonoma port would take](docs/porting-awdl-to-new-macos-versions.md#sonoma-and-older). |
+| 26 Tahoe | Yes | Yes, tested on 26.7.2 | Needs `PowerTimeoutKernelPanic` off in OpenCore. Layouts checked against the 25G332 kernel; BLE advsets tables for 26.7.2 and 26.4.1 |
+| 15 Sequoia | Yes | Yes, tested on 15.8.1 (beta.1 kext) | Needs 15.2 or later. Other 15.x builds may have different IO80211Family vtables: start with `-itlawdlnoinject` and see [porting to a new macOS build](docs/porting-awdl-to-new-macos-versions.md) |
+| 14 Sonoma and older | Use upstream [itlwm releases](https://github.com/OpenIntelWireless/itlwm/releases) | No | AirportItlwm's Sonoma builds use an older IO80211 interface and the AWDL code is only built for Sequoia and Tahoe. See [what a Sonoma port would take](docs/porting-awdl-to-new-macos-versions.md#sonoma-and-older) |
 
 ### Cards
 
-The AWDL code lives in the `iwx` HAL, which drives the Intel Wi-Fi 6/6E family: **AX200, AX201, AX210, AX211, AX411**, the Killer AX1650 and some other 22000-series cards. Only the **AX210** has been tested. Cards driven by the older HALs (`iwm`, `iwn`, for example AC 8265 or AC 7260) get Wi-Fi only.
+The AWDL code lives in the `iwx` HAL, which drives the Intel Wi-Fi 6/6E family: AX200, AX201, AX210, AX211, AX411, the Killer AX1650 and some other 22000-series cards. Only the AX210 has been tested. Cards driven by the older HALs (`iwm`, `iwn`, for example AC 8265 or AC 7260) get Wi-Fi only.
 
 ## Quick start
 
@@ -48,6 +64,7 @@ The AWDL code lives in the `iwx` HAL, which drives the Intel Wi-Fi 6/6E family: 
    ```
    -itlawdl -itlawdlaw -itlawdllisten -itlawdlp2p -itlawdltx -itlawdldata -itlawdlpromisc -itlawdltxpump itlawdllead=30000 -itlawdlfollow -btlfxadvsets
    ```
+   On Tahoe also add `-itlawdlhometx -ibtcompatbeta`, and set `Kernel > Quirks > PowerTimeoutKernelPanic` to `false` in OpenCore.
 4. Reboot, join your Wi-Fi network, open AirDrop on an iPhone and send a photo to the Mac.
 
 The full guide, including the OpenCore entries and how to check that everything loaded, is in [docs/installation.md](docs/installation.md). Every boot argument is explained in [docs/boot-args.md](docs/boot-args.md).
@@ -63,7 +80,9 @@ The full guide, including the OpenCore entries and how to check that everything 
 | [Porting AWDL to a new macOS version](docs/porting-awdl-to-new-macos-versions.md) | What depends on the macOS ABI and how to verify it on your own Mac |
 | [Porting to other Wi-Fi chips (Realtek, Atheros…)](docs/porting-to-other-wifi-chips.md) | Step-by-step plan for doing the same on different hardware |
 | [macOS driver development notes](docs/macos-driver-development.md) | Tools, techniques and the legal boundaries we follow |
-| [Test results](docs/test-results.md) | The test log that took AirDrop from "ASK accepted, upload failed" to working |
+| [Test results: Sequoia](docs/test-results.md) | The test log that took AirDrop from "ASK accepted, upload failed" to working |
+| [Test results: Tahoe](docs/test-results-tahoe.md) | Tahoe 26.7.2: QUIC, peer cache, data rates, open problems |
+| [Reference notes](docs/reference/) | IO80211 driver contract, AWDL protocol notes, OpenCore patches, Skywalk/pf/QUIC, best practices |
 | [Engineering notes](docs/research/) | Port analysis, TX timing, panic analysis, master election, BLE advsets |
 | [Changes from upstream](CHANGES-FROM-UPSTREAM.md) | Exactly what this fork changed |
 
@@ -77,6 +96,11 @@ The full guide, including the OpenCore entries and how to check that everything 
 | [`tools/kc/kcsyms.py`](tools/kc/kcsyms.py) | Lists symbols and decodes C++ vtables from **your own** kernel collection, to check driver headers against the running macOS |
 | [`tools/check-kext.sh`](tools/check-kext.sh) | Post-build checks: struct-layout consistency across compile units, imports present in the kernel |
 | [`tools/advsets/verify-advsets.pl`](tools/advsets/verify-advsets.pl) | Checks the BlueToolFixup patch patterns against your own `bluetoothd` |
+| [`tools/kc/vtcheck.py`](tools/kc/vtcheck.py), [`kcdis.py`](tools/kc/kcdis.py), [`kccalls.py`](tools/kc/kccalls.py) | Compare a built kext's vtables with the kernel's, disassemble kernel functions, list calls and strings |
+| [`tools/build/`](tools/build/) | Build the kexts with the Command Line Tools only, and inspect the Xcode project |
+| [`tools/airdrop/`](tools/airdrop/) | AirDrop transfer summaries from the log, QUIC throughput test over `awdl0` |
+
+Commands for every tool: [tools/README.md](tools/README.md).
 
 ## Building
 
@@ -97,7 +121,7 @@ Always do clean builds after touching `ieee80211_var.h`; [this is why](docs/rese
 
 ## Contributing
 
-Contributions are welcome: test reports on other machines, Tahoe testing, other Intel cards, new macOS builds, other Wi-Fi chips. Read [CONTRIBUTING.md](CONTRIBUTING.md) first. In short:
+Contributions are welcome: test reports on other machines, Sequoia testing of the current build, other Intel cards, new macOS builds, other Wi-Fi chips. Read [CONTRIBUTING.md](CONTRIBUTING.md) first. In short:
 
 - Every change needs tests and must pass `tests/run.sh` and CI.
 - If you used an AI tool, say which one and which model in the pull request.
@@ -106,7 +130,7 @@ Contributions are welcome: test reports on other machines, Tahoe testing, other 
 
 ## Credits
 
-This project stands on other people's work. What we used from each:
+This project is built on other people's work. What we used from each:
 
 | Project | License | What we used |
 |---|---|---|

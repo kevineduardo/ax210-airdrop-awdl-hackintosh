@@ -31,7 +31,7 @@ All of AWDL stays off without `-itlawdl`. The staged boot-args are the same as o
 | `include/Airport/macOS15/IO80211VirtualInterface.h` (new) | +141 | See details after the table |
 | `include/Airport/macOS15/IO80211AWDLProtocol.h` (new) | +131 | See details after the table |
 | `include/Airport/macOS15/IO80211ControllerV2.h` | +4 | `void setAwdlInterface(IO80211VirtualInterface*)`, non-virtual, with an asm label. Adds no slot and does not change the layout |
-| `include/Airport/apple80211_ioctl.h` | +8 | `apple80211_awdl_sync_params` gains `uint32_t non_election_broadcast_period` **only** under `AIRPORT_WCL && __MAC_15_2`, plus `static_assert(sizeof == 24)`. Tahoe and older targets stay at 20 bytes |
+| `include/Airport/apple80211_ioctl.h` | +8 | `apple80211_awdl_sync_params` gains `uint32_t non_election_broadcast_period` only under `AIRPORT_WCL && __MAC_15_2`, plus `static_assert(sizeof == 24)`. Tahoe and older targets stay at 20 bytes |
 | `itlwm.xcodeproj/project.pbxproj` | +2 | New `PBXBuildFile 5EA015A1D0C4E2B7F9A30B11` (same fileRef `3C6104E34D78EB99C79D1C20`), added to the Sequoia Sources phase `AFFBDFD057C2402C908ECB89`. `plutil -lint` reports OK |
 
 ### Details: `AirportItlwmAWDLInterface.hpp`
@@ -56,7 +56,7 @@ All of AWDL stays off without `-itlawdl`. The staged boot-args are the same as o
 ### Details: `macOS15/IO80211VirtualInterface.h`
 
 - Base: Unopcoooo's reconstruction (UN `include/Airport/macOS15/IO80211VirtualInterface.h`).
-- `setLinkState(IO80211LinkState, unsigned)` now returns **bool**. crazyhulk ignores the return value.
+- `setLinkState(IO80211LinkState, unsigned)` now returns `bool`. crazyhulk ignores the return value.
 - Extra forward declarations, the same as in the Tahoe header.
 - Header comment with provenance and the verification performed.
 
@@ -68,7 +68,7 @@ All of AWDL stays off without `-itlawdl`. The staged boot-args are the same as o
 
 ### Guards: correction to the count
 
-Grepping for `__IO80211_TARGET != __MAC_15_2` gives **14 lines**. Only **10 are AWDL guards**, and those were replaced. The other 4 are not AWDL-related and were left alone:
+Grepping for `__IO80211_TARGET != __MAC_15_2` gives 14 lines. Only 10 are AWDL guards, and those were replaced. The other 4 are not AWDL-related and were left alone:
 
 - `AirportItlwmSkywalkInterface.hpp:36/94/105`: InfraProtocol differences between 15 and 26.
 - `WCL/WCL.hpp:132`.
@@ -99,19 +99,19 @@ The kernel collection was parsed with small ad-hoc scripts (a Python equivalent 
 
 | Item | 24H32 result |
 |---|---|
-| `__ZTV23IO80211VirtualInterface`: ancestors | Exactly **53** `IO80211VirtualInterface::*` entries up to 0xe58, and they are the same 53 the header declares (compared with `comm`: 0 extra, 0 missing) |
-| New VI slots | 0xe60 `init`, 0xe68 `setLinkState`, 0xe70 `forwardPacket`, 0xe78 `handleIoctl`, 0xe80 `addPeerToCache`, 0xe88 `deletePeerFromCache`, 0xe90 `handleDebugCmd`, 0xe98 `getPeerSlotDataStats`, 0xea0 `getPeerDataStats`, 0xea8 `clearPeerDataStats`, 0xeb0 `setAwdlCurrentChannelSequenceIndex`, 0xeb8 `isOutputFlowControlled`, 0xec0 `setOutputFlowControlled`, 0xec8 `clearOutputFlowControlled`, 0xed0 `configureAQMOutput`, 0xed8 `attachToBpf`, 0xee0 `configureIfnet`, 0xee8 `reset`, 0xef0 `dupAndTransmitMcastPacket`, 0xef8 `freeMulticastPacket`, 0xf00 `triggerAWDLMulticastTx`, 0xf08 `p2pMulticastTx(pkt**,u)`, 0xf10 `sendPendingPacketsToStack`, 0xf18 `freePendingPackets`, 0xf20–0xf98 `_RESERVED0..15`. **Identical to the header** |
+| `__ZTV23IO80211VirtualInterface`: ancestors | Exactly 53 `IO80211VirtualInterface::*` entries up to 0xe58, and they are the same 53 the header declares (compared with `comm`: 0 extra, 0 missing) |
+| New VI slots | 0xe60 `init`, 0xe68 `setLinkState`, 0xe70 `forwardPacket`, 0xe78 `handleIoctl`, 0xe80 `addPeerToCache`, 0xe88 `deletePeerFromCache`, 0xe90 `handleDebugCmd`, 0xe98 `getPeerSlotDataStats`, 0xea0 `getPeerDataStats`, 0xea8 `clearPeerDataStats`, 0xeb0 `setAwdlCurrentChannelSequenceIndex`, 0xeb8 `isOutputFlowControlled`, 0xec0 `setOutputFlowControlled`, 0xec8 `clearOutputFlowControlled`, 0xed0 `configureAQMOutput`, 0xed8 `attachToBpf`, 0xee0 `configureIfnet`, 0xee8 `reset`, 0xef0 `dupAndTransmitMcastPacket`, 0xef8 `freeMulticastPacket`, 0xf00 `triggerAWDLMulticastTx`, 0xf08 `p2pMulticastTx(pkt**,u)`, 0xf10 `sendPendingPacketsToStack`, 0xf18 `freePendingPackets`, 0xf20 to 0xf98 `_RESERVED0..15`. Identical to the header |
 | `IO80211SkywalkInterface`: last slots | 0xe50 `getLastTxTimeStamp`, 0xe58 `getLastRxTimeStamp`. Matches the existing Sequoia header |
-| `__ZTV19IO80211AWDLProtocol` | **63** `___cxa_pure_virtual` from 0xfa0 to 0x1190; 0x1198 = 0 (end) |
+| `__ZTV19IO80211AWDLProtocol` | 63 `___cxa_pure_virtual` from 0xfa0 to 0x1190; 0x1198 = 0 (end) |
 | `__ZTV17IO80211BufferPool` | +0x118 `getBuffer()`, +0x120 `returnBuffer(IO80211Buffer*)`, +0x128 `flushPool`, +0x130 `resetPool`, +0x138 `printStats`. **`kPoolGetBuffer = 0x118` is valid on Sequoia** |
-| `__ZTV13IO80211Buffer` | **Has no virtual methods of its own.** The vtable ends at +0x110 (`OSObject::_RESERVED15`) and +0x118 is 0. Tahoe's `kBufReturn` 0x118, `kBufSetLength` 0x138, `kBufGetCapacity` 0x140 and `kBufGetBytes` 0x158 **would panic on Sequoia**. That is why on Sequoia these calls go by symbol |
-| Export: buffers | `__ZN13IO80211Buffer12returnBufferEv`, `…9setLengthEm`, `…14getBytesNoCopyEv`, `__ZNK13IO80211Buffer11getCapacityEv` and `__ZN17IO80211BufferPool9getBufferEv` are `N_SECT\|N_EXT` (0x0f) in IO80211Family. AppleBCMWLANCoreMac **imports by name** `returnBuffer`, `setLength`, `getBytesNoCopy()`, `bpfTapInput(IO80211Buffer*…)`, `getMgmtFramePool`, `VI::init` and `VI::setLinkState` |
+| `__ZTV13IO80211Buffer` | Has no virtual methods of its own. The vtable ends at +0x110 (`OSObject::_RESERVED15`) and +0x118 is 0. Tahoe's `kBufReturn` 0x118, `kBufSetLength` 0x138, `kBufGetCapacity` 0x140 and `kBufGetBytes` 0x158 **would panic on Sequoia**. That is why on Sequoia these calls go by symbol |
+| Export: buffers | `__ZN13IO80211Buffer12returnBufferEv`, `…9setLengthEm`, `…14getBytesNoCopyEv`, `__ZNK13IO80211Buffer11getCapacityEv` and `__ZN17IO80211BufferPool9getBufferEv` are `N_SECT\|N_EXT` (0x0f) in IO80211Family. AppleBCMWLANCoreMac imports by name `returnBuffer`, `setLength`, `getBytesNoCopy()`, `bpfTapInput(IO80211Buffer*…)`, `getMgmtFramePool`, `VI::init` and `VI::setLinkState` |
 | Export: AWDLProtocol | `IO80211AWDLProtocol::gMetaClass`, `C2` and `D2` are also imported by Broadcom, so `OSDefineMetaClassAndStructors` links |
 | `__asm__` labels | All 107 IO80211 labels in the new or modified headers exist as exports in IO80211Family |
 | RX meta for `bpfTapInput` | In `AppleBCMWLANProximityInterface::handleActionFrame_rx`, +0x679 has `mov r8d,0x48`, +0x685 `mov edx,0xc` and +0x68a a `call` to `0xffffff80022a50ec`, which is `IO80211VirtualInterface::bpfTapInput(IO80211Buffer*,…)`. The buffer is at `rbp-0x78`. The channel is written via `lea rsi,[rbp-0x6c]` (+0x0c). `rate`/`rssi`/`tsf` are written with `bswap` at +0x28, +0x2c and +0x30. **Size, DLT and fields +0x0c/+0x28/+0x2c/+0x30 match Tahoe** |
 | OOB request (Broadcom `setAWDL_OOB_REQUEST` / `_AUTO_REQUEST`) | Reads a `u16` at +0x28 (40) and a 64-bit pointer at +0x30 (48). The auto version also reads +0x0c, +0x10 and a `u16` at +0x14. Matches CH's `recordOOB` |
 | `setAWDL_SYNC_FRAME_TEMPLATE` | Reads +0x04 (len) and +0x08 (64-bit pointer). Matches |
-| `setAWDL_SYNC_PARAMS` | Reads +0x04, +0x08, +0x0c, +0x10 and **+0x14**. Hence the 24-byte size |
+| `setAWDL_SYNC_PARAMS` | Reads +0x04, +0x08, +0x0c, +0x10 and +0x14, hence the 24-byte size |
 | `IO80211Controller::setAwdlInterface` | 20-byte body: `mov rax,[rdi+0x120]; mov [rax+0x188],rsi; ret`. A trivial setter, and `nullptr` is safe. **Broadcom does not import it** |
 | Already confirmed earlier (UN and the port analysis) | AW events 41/43 with 0x24/0x28 bytes; `sync_state` +8/+16/+20; `channel_sequence` +5/+7/+12×12 in 400 bytes; role 6; capability index 0x20 |
 

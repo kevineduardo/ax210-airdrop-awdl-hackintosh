@@ -20,7 +20,7 @@ Check the downloads against `SHA256SUMS.txt` in the release:
 shasum -a 256 -c SHA256SUMS.txt --ignore-missing
 ```
 
-Use the **Release** builds for daily use. The **Debug** builds log much more and are meant for bug reports.
+Use the Release builds for daily use. The Debug builds log much more and are meant for bug reports.
 
 ## 2. Remove what conflicts
 
@@ -45,21 +45,44 @@ Lilu must load before IntelBTPatcher and BlueToolFixup, which are Lilu plugins. 
 
 Other OpenCore settings (`SecureBootModel`, `DmgLoading`, and so on) are the same as for upstream AirportItlwm; this fork does not need anything extra. The test machine uses `SecureBootModel=Disabled`.
 
-## 4. Boot arguments
+## 4. Tahoe only: two OpenCore settings
+
+On macOS 26 (Darwin 25.x) AirDrop needs user-space networking (Skywalk) to work, and one OpenCore quirk silently turns it off:
+
+1. Set `Kernel > Quirks > PowerTimeoutKernelPanic` to `false`. On kernel 25.6 the quirk falls back to rewriting the first `"com.apple\0"` string in the kernel, which the linker shares with pf's anchor check. pf then stops recognising Apple's anchors, user-space networking is disabled for the whole machine, and AirDrop's QUIC transfers stall. This happens with any network card.
+2. Optionally add the replacement kernel patch for `IOService::ackTimerTick` (same intended effect, without touching the string). The table with Find, Mask, Replace and the kernel range is in [reference/opencore-patches.md](reference/opencore-patches.md).
+
+Check after rebooting:
+
+```sh
+sysctl net.filter_state net.link.generic.system.enable_netagent   # expect: empty, and 1
+```
+
+If you see `pf` and `0`, read [reference/skywalk-pf-quic.md](reference/skywalk-pf-quic.md).
+
+## 5. Boot arguments
 
 Add to `NVRAM → Add → 7C436110-AB2A-4BBB-A880-FE41995C9F82 → boot-args`:
 
+Sequoia:
+
 ```
 -itlawdl -itlawdlaw -itlawdllisten -itlawdlp2p -itlawdltx -itlawdldata -itlawdlpromisc -itlawdltxpump itlawdllead=30000 -itlawdlfollow -btlfxadvsets
+```
+
+Tahoe (adds `-itlawdlhometx`, and `-ibtcompatbeta` for IntelBluetoothFirmware):
+
+```
+-itlawdl -itlawdlaw -itlawdllisten -itlawdlp2p -itlawdltx -itlawdldata -itlawdlpromisc -itlawdltxpump itlawdllead=30000 -itlawdlfollow -itlawdlhometx -btlfxadvsets -ibtcompatbeta
 ```
 
 For the first boots also add `keepsyms=1 debug=0x100`. If `boot-args` is listed in `NVRAM → Delete`, the new value replaces the old one at the next boot; otherwise reset NVRAM once.
 
 What every switch does: [boot-args.md](boot-args.md).
 
-**First boot on a macOS build nobody has tested yet** (anything other than Sequoia 15.8.1 so far): boot once with only `-itlawdl -itlawdlnoinject`, check that Wi-Fi works and that there is no panic, then add the rest. See [porting-awdl-to-new-macos-versions.md](porting-awdl-to-new-macos-versions.md).
+On a macOS build nobody has tested yet (anything other than Sequoia 15.8.1 and Tahoe 26.7.2 so far), boot once with only `-itlawdl -itlawdlnoinject`, check that Wi-Fi works and that there is no panic, then add the rest. See [porting-awdl-to-new-macos-versions.md](porting-awdl-to-new-macos-versions.md).
 
-## 5. Check that everything loaded
+## 6. Check that everything loaded
 
 ```sh
 kmutil showloaded --list-only | grep -iE 'Airport|IntelBluetooth|BTPatcher|BlueTool|Lilu'
@@ -74,7 +97,7 @@ Then, on an iPhone signed in to iCloud (or with AirDrop set to "Everyone for 10 
 
 If something does not work, run `scripts/collect-diagnostics.sh` and see [troubleshooting.md](troubleshooting.md).
 
-## 6. Rollback
+## 7. Rollback
 
 If the Mac panics or does not boot:
 
@@ -83,6 +106,8 @@ If the Mac panics or does not boot:
 3. If it still panics, put back the AirportItlwm you used before.
 
 ## SIP and security notes
+
+Before changing `config.plist`, copy it somewhere safe and run `plutil -lint` afterwards. If you edit it with `plutil -insert`, always give the array index (`Kernel.Patch.25`); an empty index corrupts the file.
 
 The test machine runs with SIP partly disabled for reasons that have nothing to do with Wi-Fi. Kexts injected by OpenCore do not need SIP disabled, so this setup should also work with SIP enabled, but that has not been tested yet. Reports are welcome.
 

@@ -6,10 +6,10 @@ Practical notes from this project for anyone writing or porting macOS kernel ext
 
 We want this repo to be safe to fork and redistribute. The rules:
 
-- **Ship no Apple code.** No kexts, kernel collections, `bluetoothd`, firmware, frameworks, or headers copied from Apple SDKs or KDKs. The build uses [MacKernelSDK](https://github.com/acidanthera/MacKernelSDK), fetched at build time.
-- **Reverse engineering happens on your own licensed copy of macOS**, for interoperability: to make our driver talk to Apple's IO80211Family. Run the tools on your machine; keep their raw output (symbol dumps, disassembly, decompiled code) on your machine.
-- **Commit only what interoperability needs**: class names, method names and their slot order, struct sizes and field offsets the driver must use, and a note of how they were verified. Write that in your own words and code. Never paste decompiled Apple code.
-- **Byte patterns for in-memory patches** (BlueToolFixup) are the minimum needed to find a location; they are verified on your own copy, the binary itself is never committed.
+- Ship no Apple code. No kexts, kernel collections, `bluetoothd`, firmware, frameworks, or headers copied from Apple SDKs or KDKs. The build uses [MacKernelSDK](https://github.com/acidanthera/MacKernelSDK), fetched at build time.
+- Reverse engineering happens on your own licensed copy of macOS, for interoperability: to make our driver talk to Apple's IO80211Family. Run the tools on your machine; keep their raw output (symbol dumps, disassembly, decompiled code) on your machine.
+- Commit only what interoperability needs: class names, method names and their slot order, struct sizes and field offsets the driver must use, and a note of how they were verified. Write that in your own words and code. Never paste decompiled Apple code.
+- Byte patterns for in-memory patches (BlueToolFixup) are the minimum needed to find a location. They are verified on your own copy, and the binary itself is never committed.
 - Respect the licenses of the open-source code you build on (GPL-2.0 for itlwm and BrcmPatchRAM: changed files carry a notice, derived kexts stay GPL-2.0, sources are published with every binary).
 - Apple's macOS license only allows installing macOS on Apple-branded hardware. We don't give advice on getting around Apple's license or activation, and the docs don't explain how to obtain macOS.
 
@@ -51,16 +51,16 @@ From that you can write a header where each `virtual` method sits at the right s
 
 Two lessons that cost us boot panics:
 
-1. **Stale objects.** itlwm includes the net80211 headers with `-isystem`, and clang's `-MMD` dependency files skip system headers. Changing a struct in `ieee80211_var.h` recompiled 3 files and left 38 with the old layout, linked into one kext. Fixes now in the project: `-Xclang -sys-header-deps`, a **layout fingerprint** symbol (objects built with another layout leave an undefined symbol, so the kext refuses to load), and `tools/check-kext.sh` comparing struct sizes in the DWARF of every compile unit. Details: [research/panic-stale-struct-layout.md](research/panic-stale-struct-layout.md).
-2. **Debug and Release are different binaries.** A bug can hide in one. Test the configuration you ship.
+1. Stale objects. itlwm includes the net80211 headers with `-isystem`, and clang's `-MMD` dependency files skip system headers. Changing a struct in `ieee80211_var.h` recompiled 3 files and left 38 with the old layout, linked into one kext. Fixes now in the project: `-Xclang -sys-header-deps`, a layout fingerprint symbol (objects built with another layout leave an undefined symbol, so the kext refuses to load), and `tools/check-kext.sh` comparing struct sizes in the DWARF of every compile unit. Details: [research/panic-stale-struct-layout.md](research/panic-stale-struct-layout.md).
+2. Debug and Release are different binaries, and a bug can hide in one of them. Test the configuration you ship.
 
 ## Make the driver observable
 
-Every counter that helped fix AWDL is published as an IORegistry property and read by `awdlctl show`: TX ok/fail/busy, dwell-start delay histogram, data latency histogram, peer alignment, election role. Publishing counters is cheap and turns "AirDrop sometimes fails" into "45 % of dwells start more than 10 ms late". Do it from day one.
+Every counter that helped fix AWDL is published as an IORegistry property and read by `awdlctl show`: TX ok/fail/busy, dwell-start delay histogram, data latency histogram, peer alignment, election role. Publishing counters from day one is cheap, and it turns "AirDrop sometimes fails" into "45 % of dwells start more than 10 ms late".
 
 Put risky features behind boot-args, default off, so a user can always get back to a working system by removing a flag. Add run-time switches (`setProperties`, administrator only) for anything you want to A/B in the same boot.
 
-## Test on hardware like a scientist
+## Testing on hardware
 
 - One change per boot when bringing something up.
 - Record before and after (`scripts/monitor-awdl.sh` writes a timeline per AirDrop attempt).
