@@ -1,3 +1,5 @@
+// Modified by the ax210-airdrop-awdl-hackintosh project, 2026-11 (AWDL/AirDrop port to
+// macOS 15 Sequoia and related fixes). See CHANGES-FROM-UPSTREAM.md. License: GPL-2.0.
 /*
  * Copyright (c) 2005 Apple Computer, Inc. All rights reserved.
  *
@@ -1047,7 +1049,15 @@ struct apple80211_awdl_sync_params {
     uint32_t    availability_window_period;
     uint32_t    extension_length;
     uint32_t    synchronization_frame_period;
+#if defined(AIRPORT_WCL) && __IO80211_TARGET == __MAC_15_2
+    // 24H32 wire layout is 24 bytes: AppleBCMWLANProximityInterface::setAWDL_SYNC_PARAMS
+    // reads +0x04/+0x08/+0x0c/+0x10/+0x14 (verified in the 15.8.1 KC). Tahoe unchanged.
+    uint32_t    non_election_broadcast_period;
+#endif
 } __attribute__((packed));
+#if defined(AIRPORT_WCL) && __IO80211_TARGET == __MAC_15_2
+static_assert(sizeof(struct apple80211_awdl_sync_params) == 24, "24H32 awdl sync params size");
+#endif
 
 struct apple80211_awdl_cap {
     uint32_t    version;

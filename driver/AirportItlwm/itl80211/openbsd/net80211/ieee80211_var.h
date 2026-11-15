@@ -1,3 +1,5 @@
+// Modified by the ax210-airdrop-awdl-hackintosh project, 2026-11 (AWDL/AirDrop port to
+// macOS 15 Sequoia and related fixes). See CHANGES-FROM-UPSTREAM.md. License: GPL-2.0.
 /*
 * Copyright (C) 2020  钟先耀
 *
@@ -561,6 +563,24 @@ struct ieee80211com {
      */
     int             (*ic_awdl_data_handler)(struct ieee80211com *, mbuf_t,
                         struct ieee80211_rxinfo *);
+    /*
+     * AWDL TX diagnostics (always on, counters only) and the dwell query used
+     * by the opt-in TX pump (-itlawdltxpump).
+     * ic_awdl_dwell_state: 0 idle, 1 requested (no START yet), 2 running;
+     * *chan gets the channel of the last listen request.
+     */
+    int             (*ic_awdl_dwell_state)(struct ieee80211com *, uint8_t *chan);
+    /* Listen request -> firmware START, ms: <2 <5 <10 <20 <40 <80 <160 >=160 */
+    uint32_t        ic_awdl_roc_delay_hist[8];
+    uint64_t        ic_awdl_roc_start_us;    /* host us of the last START */
+    uint64_t        ic_awdl_roc_end_us;      /* host us of the last END */
+    /* iwx_awdl_tx calls by [0 action, 1 data][requested, running on chan,
+     * running on another chan, idle] */
+    uint32_t        ic_awdl_tx_state_hist[2][4];
+    /* TX completions on the P2P queue by dwell channel: 2.4 GHz, 5 GHz
+     * UNII-1 (36-48), other 5 GHz (52-144, DFS), UNII-3 (149+) */
+    uint32_t        ic_awdl_tx_ok_band[4];
+    uint32_t        ic_awdl_tx_fail_band[4];
 	CTimeout*		ic_bgscan_timeout;
 	uint32_t		ic_bgscan_fail;
 	u_int8_t		ic_myaddr[IEEE80211_ADDR_LEN];
@@ -690,6 +710,38 @@ struct ieee80211com {
     
 	TAILQ_HEAD(, ieee80211_ess)	 ic_ess;
 };
+
+/*
+ * Link-time layout fingerprint.
+ *
+ * Every translation unit that includes this header references one symbol
+ * whose (mangled) name carries the sizes of the structures shared between
+ * net80211, the HAL drivers and the AirportItlwm front end. Only ieee80211.c
+ * defines it. If some object files are built against another version of
+ * these structures (stale objects after a header edit: the net80211 headers
+ * are found through -isystem, which Xcode's -MMD dependency files ignore
+ * unless -sys-header-deps is passed, see the project's OTHER_CFLAGS), the kext
+ * ends up with an undefined ieee80211_layout_tag<...>::tag symbol, which
+ * tools/check-kext.sh (and the kernel linker) rejects, instead of a kext
+ * whose halves disagree on where ic_bss or ic_state live.
+ */
+#ifdef __cplusplus
+template <unsigned long IcSize, unsigned long NodeSize, unsigned long IfnetSize,
+          unsigned long RxinfoSize, unsigned long ChanSize>
+struct ieee80211_layout_tag {
+    static const char tag;
+};
+#define IEEE80211_LAYOUT_TAG                                            \
+    ieee80211_layout_tag<sizeof(struct ieee80211com),                   \
+                         sizeof(struct ieee80211_node),                 \
+                         sizeof(struct _ifnet),                         \
+                         sizeof(struct ieee80211_rxinfo),               \
+                         sizeof(struct ieee80211_channel)>
+template <> const char IEEE80211_LAYOUT_TAG::tag;   /* defined in ieee80211.c */
+__attribute__((used)) static const char *const ieee80211_layout_ref =
+    &IEEE80211_LAYOUT_TAG::tag;
+#endif
+
 #define	ic_if		ic_ac.ac_if
 #define	ic_softc	ic_if.if_softc
 

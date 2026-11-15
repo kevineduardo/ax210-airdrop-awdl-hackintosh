@@ -1,3 +1,5 @@
+// Modified by the ax210-airdrop-awdl-hackintosh project, 2026-11 (AWDL/AirDrop port to
+// macOS 15 Sequoia and related fixes). See CHANGES-FROM-UPSTREAM.md. License: GPL-2.0.
 //
 //  AirportItlwmV2.cpp
 //  AirportItlwm-Sonoma
@@ -142,10 +144,11 @@ bool AirportItlwm::init(OSDictionary *properties)
     bool ret = super::init(properties);
     awdlSyncEnable = true;
     fAWDLEnabled = false;
-#if defined(AIRPORT_WCL) && __IO80211_TARGET != __MAC_15_2
+#if defined(AIRPORT_AWDL)
     fAWDLIf = nullptr;
     fAWDLBsdIf = nullptr;
     fCreatingAWDL = false;
+    fAWDLSetIf = false;
 #endif
     power_state = 0;
     memset(geo_location_cc, 0, sizeof(geo_location_cc));
@@ -483,7 +486,7 @@ bool AirportItlwm::start(IOService *provider)
 
 int AirportItlwm::awdlActionFrameHandler(struct ieee80211com *ic, mbuf_t m, struct ieee80211_rxinfo *rxi)
 {
-#if defined(AIRPORT_WCL) && __IO80211_TARGET != __MAC_15_2
+#if defined(AIRPORT_AWDL)
     AirportItlwm *that = OSDynamicCast(AirportItlwm, ic->ic_ac.ac_if.controller);
     if (!that || !that->fAWDLIf)
         return 0;
@@ -499,7 +502,7 @@ int AirportItlwm::awdlActionFrameHandler(struct ieee80211com *ic, mbuf_t m, stru
 // to awdl0's BSD interface, as OWL does (seemoo-lab/owl src/rx.c).
 int AirportItlwm::awdlDataFrameHandler(struct ieee80211com *ic, mbuf_t m, struct ieee80211_rxinfo *rxi)
 {
-#if defined(AIRPORT_WCL) && __IO80211_TARGET != __MAC_15_2
+#if defined(AIRPORT_AWDL)
     AirportItlwm *that = OSDynamicCast(AirportItlwm, ic->ic_ac.ac_if.controller);
     if (!that || !that->fAWDLIf || !that->fAWDLBsdIf)
         return 0;
@@ -513,7 +516,7 @@ void AirportItlwm::stop(IOService *provider)
 {
     XYLog("%s\n", __PRETTY_FUNCTION__);XYLog("%s\n", __PRETTY_FUNCTION__);
     struct _ifnet *ifp = &fHalService->get80211Controller()->ic_ac.ac_if;
-#if defined(AIRPORT_WCL) && __IO80211_TARGET != __MAC_15_2
+#if defined(AIRPORT_AWDL)
     destroyAWDLInterface();
 #endif
 #ifdef AIRPORT_WCL
@@ -610,7 +613,7 @@ bool AirportItlwm::configureInterface(IONetworkInterface *netif)
         XYLog("super failed\n");
         return false;
     }
-#if defined(AIRPORT_WCL) && __IO80211_TARGET != __MAC_15_2
+#if defined(AIRPORT_AWDL)
     // awdl0 must not take over the station's net80211 ifnet or statistics.
     if (AirportItlwmAWDLEthernetInterface *awdl = OSDynamicCast(AirportItlwmAWDLEthernetInterface, netif))
         return awdl->registerOutputHandler(awdl,
@@ -641,7 +644,7 @@ bool AirportItlwm::configureInterface(IONetworkInterface *netif)
 
 IONetworkInterface *AirportItlwm::createInterface()
 {
-#if defined(AIRPORT_WCL) && __IO80211_TARGET != __MAC_15_2
+#if defined(AIRPORT_AWDL)
     if (fCreatingAWDL) {
         AirportItlwmAWDLEthernetInterface *awdl = new AirportItlwmAWDLEthernetInterface;
         if (awdl) {

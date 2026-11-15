@@ -612,6 +612,7 @@
 		F8A028302A4A7E0500C6DE90 /* AirportItlwmEthernetInterface.hpp in Headers */ = {isa = PBXBuildFile; fileRef = F8A0282E2A4A7E0400C6DE90 /* AirportItlwmEthernetInterface.hpp */; };
 		F8A028722A4A7FE100C6DE90 /* AirportItlwmSkywalkInterface.cpp in Sources */ = {isa = PBXBuildFile; fileRef = F8A028702A4A7FE100C6DE90 /* AirportItlwmSkywalkInterface.cpp */; };
 		1EE81010096D5892BA04A0E1 /* AirportItlwmAWDLInterface.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3C6104E34D78EB99C79D1C20 /* AirportItlwmAWDLInterface.cpp */; };
+		5EA015A1D0C4E2B7F9A30B11 /* AirportItlwmAWDLInterface.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3C6104E34D78EB99C79D1C20 /* AirportItlwmAWDLInterface.cpp */; };
 		F8A028732A4A7FE100C6DE90 /* AirportItlwmSkywalkInterface.hpp in Headers */ = {isa = PBXBuildFile; fileRef = F8A028712A4A7FE100C6DE90 /* AirportItlwmSkywalkInterface.hpp */; };
 		F8A0287F2A4A80EA00C6DE90 /* IOPCIEDeviceWrapper.cpp in Sources */ = {isa = PBXBuildFile; fileRef = F8A0287D2A4A80EA00C6DE90 /* IOPCIEDeviceWrapper.cpp */; };
 		F8A028802A4A80EA00C6DE90 /* IOPCIEDeviceWrapper.hpp in Headers */ = {isa = PBXBuildFile; fileRef = F8A0287E2A4A80EA00C6DE90 /* IOPCIEDeviceWrapper.hpp */; };
@@ -3360,6 +3361,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5EA015A1D0C4E2B7F9A30B11 /* AirportItlwmAWDLInterface.cpp in Sources */,
 				A7D000012026100700000001 /* ItlDma.cpp in Sources */,
 				F8D94CA62B9ABFE20081A3C4 /* rs.cpp in Sources */,
 				F8D94CA72B9ABFE20081A3C4 /* _mbuf.cpp in Sources */,
@@ -3552,6 +3554,10 @@
 				MODULE_VERSION = 2.4.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
+				OTHER_CFLAGS = (
+					"-Xclang",
+					"-sys-header-deps",
+				);
 				OTHER_CPLUSPLUSFLAGS = (
 					"-Wno-deprecated-register",
 					"$(OTHER_CFLAGS)",
@@ -3620,6 +3626,10 @@
 				MODULE_VERSION = 2.4.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
+				OTHER_CFLAGS = (
+					"-Xclang",
+					"-sys-header-deps",
+				);
 				OTHER_CPLUSPLUSFLAGS = (
 					"-Wno-deprecated-register",
 					"$(OTHER_CFLAGS)",

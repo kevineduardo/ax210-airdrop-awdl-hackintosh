@@ -1,0 +1,20 @@
+# Third-party SDKs fetched for builds (see CONTRIBUTING.md)
+driver/AirportItlwm/MacKernelSDK/
+driver/BlueToolFixup/MacKernelSDK/
+driver/BlueToolFixup/Lilu.kext/
+# Build output
+build/
+dist/
+logs/
+DerivedData/
+tools/awdlctl/awdlctl
+driver/**/build/
+# Diagnostics output (contains MAC addresses and device names)
+awdl-monitor-*/
+diagnostics-*.txt
+# macOS / Xcode noise
+.DS_Store
+._*
+xcuserdata/
+*.xcuserstate
+__pycache__/

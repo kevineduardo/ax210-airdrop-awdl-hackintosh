@@ -1,3 +1,5 @@
+// Modified by the ax210-airdrop-awdl-hackintosh project, 2026-11 (AWDL/AirDrop port to
+// macOS 15 Sequoia and related fixes). See CHANGES-FROM-UPSTREAM.md. License: GPL-2.0.
 /*
  * Copyright (C) 2020  钟先耀
  *
@@ -335,6 +337,21 @@ ieee80211_inputm(struct _ifnet *ifp, mbuf_t m, struct ieee80211_node *ni,
             }
             goto out;
         }
+    }
+    /*
+     * Group-addressed AWDL data (mDNS, IPv6 ND): no DS bits, addr3 is the AWDL
+     * BSSID. Without this they fell through to the station path and were
+     * dropped there (is_rx_wrongdir), so awdl0 never received any multicast.
+     */
+    if (ic->ic_awdl_addr_gen && ic->ic_awdl_bssid_valid &&
+        type == IEEE80211_FC0_TYPE_DATA && dir == IEEE80211_FC1_DIR_NODS &&
+        mbuf_len(m) >= sizeof(struct ieee80211_frame) &&
+        IEEE80211_IS_MULTICAST(wh->i_addr1) &&
+        IEEE80211_ADDR_EQ(wh->i_addr3, ic->ic_awdl_bssid) &&
+        !IEEE80211_ADDR_EQ(wh->i_addr2, ic->ic_awdl_addr)) {
+        if (ic->ic_awdl_data_handler && (*ic->ic_awdl_data_handler)(ic, m, rxi))
+            m = NULL;
+        goto out;
     }
     if (ic->ic_vendor_action_handler && ic->ic_opmode == IEEE80211_M_STA) {
         if (type == IEEE80211_FC0_TYPE_MGT &&

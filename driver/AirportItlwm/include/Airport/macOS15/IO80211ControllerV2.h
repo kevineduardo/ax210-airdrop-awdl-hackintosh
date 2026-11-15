@@ -1,3 +1,5 @@
+// Modified by the ax210-airdrop-awdl-hackintosh project, 2026-11 (AWDL/AirDrop port to
+// macOS 15 Sequoia and related fixes). See CHANGES-FROM-UPSTREAM.md. License: GPL-2.0.
 //
 //  IO80211ControllerV2.h
 //  AirportItlwm
@@ -216,6 +218,10 @@ private: virtual void _abi_0dc0() __asm__("__ZN17IO80211Controller16CreatePostOf
     virtual void _RESERVEDIO80211Controller14();
     virtual void _RESERVEDIO80211Controller15();
     virtual IOReturn setMulticastList(ether_addr const*, unsigned int);
+    // Non-virtual, no slot. 24H32 body (IO80211Family): mov rax,[rdi+0x120];
+    // mov [rax+0x188],rsi; ret -- a plain setter, nullptr is safe. Used only by
+    // the optional -itlawdlsetif AWDL path.
+    void setAwdlInterface(IO80211VirtualInterface *) __asm__("__ZN17IO80211Controller16setAwdlInterfaceEP23IO80211VirtualInterface");
 private: uint8_t _layout[0x128 - sizeof(IOEthernetController)];
 };
 static_assert(sizeof(IO80211Controller) == 0x128, "WCL ABI size");

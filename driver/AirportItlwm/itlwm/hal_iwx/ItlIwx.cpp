@@ -1,3 +1,5 @@
+// Modified by the ax210-airdrop-awdl-hackintosh project, 2026-11 (AWDL/AirDrop port to
+// macOS 15 Sequoia and related fixes). See CHANGES-FROM-UPSTREAM.md. License: GPL-2.0.
 /*
  * Copyright (C) 2020  钟先耀
  *
@@ -128,6 +130,9 @@
 OSDefineMetaClassAndStructors(ItlIwx, ItlHalService)
 
 #define DEVNAME(_s)    ((_s)->sc_dev.dv_xname)
+
+/* AWDL diagnostics helpers, defined next to iwx_awdl_listen. */
+static int iwx_awdl_band(uint8_t chan);
 
 #define IC2IFP(_ic_) (&(_ic_)->ic_if)
 
@@ -6275,6 +6280,11 @@ iwx_rx_tx_cmd(struct iwx_softc *sc, struct iwx_rx_packet *pkt,
                 sc->sc_ic.ic_awdl_tx_fail++;
                 sc->sc_ic.ic_awdl_tx_last_status = st;
             }
+            int band = iwx_awdl_band(sc->sc_ic.ic_awdl_listen_chan);
+            if (st == IWX_TX_STATUS_SUCCESS)
+                sc->sc_ic.ic_awdl_tx_ok_band[band]++;
+            else
+                sc->sc_ic.ic_awdl_tx_fail_band[band]++;
         }
         iwx_rx_tx_cmd_single(sc, pkt, txd);
         DPRINTFN(3, ("%s tid=%d ssn=%d idx=%d\n", __FUNCTION__, tid, ssn, idx));
@@ -9058,6 +9068,38 @@ static uint64_t iwx_uptime_us()
     return ns / 1000;
 }
 
+/* Index for ic_awdl_tx_ok_band / ic_awdl_tx_fail_band. */
+static int iwx_awdl_band(uint8_t chan)
+{
+    if (chan && chan <= 14)
+        return 0;
+    if (chan >= 36 && chan <= 48)
+        return 1;
+    if (chan >= 149)
+        return 3;
+    return 2;
+}
+
+static void iwx_awdl_delay_hist(struct ieee80211com *ic, uint32_t us)
+{
+    static const uint32_t lim[7] = { 2000, 5000, 10000, 20000, 40000, 80000, 160000 };
+    int i = 0;
+    while (i < 7 && us >= lim[i])
+        i++;
+    ic->ic_awdl_roc_delay_hist[i]++;
+}
+
+/* ic_awdl_dwell_state: 0 idle, 1 requested, 2 running (see ieee80211_var.h). */
+static int iwx_awdl_dwell_state(struct ieee80211com *ic, uint8_t *chan)
+{
+    struct iwx_softc *sc = (struct iwx_softc *)IC2IFP(ic)->if_softc;
+    if (chan)
+        *chan = ic->ic_awdl_listen_chan;
+    if (sc->sc_aux_roc_running)
+        return 2;
+    return sc->sc_aux_roc_pending ? 1 : 0;
+}
+
 static bool iwx_awdl_promisc_enabled()
 {
     static int enabled = -1;
@@ -9220,6 +9262,13 @@ iwx_awdl_tx(struct ieee80211com *ic, uint8_t chan, const uint8_t *frame, size_t 
     struct iwx_softc *sc = (struct iwx_softc *)IC2IFP(ic)->if_softc;
     ItlIwx *that = container_of(sc, ItlIwx, com);
     
+    {
+        /* Diagnostics: where in the dwell each attempt lands. */
+        int kind = (len > 0 && (frame[0] & IEEE80211_FC0_TYPE_MASK) == IEEE80211_FC0_TYPE_DATA) ? 1 : 0;
+        int state = sc->sc_aux_roc_running ? (ic->ic_awdl_listen_chan == chan ? 1 : 2) :
+            sc->sc_aux_roc_pending ? 0 : 3;
+        ic->ic_awdl_tx_state_hist[kind][state]++;
+    }
     if (!iwx_p2p_listen_enabled() || !sc->sc_p2p_queue || !sc->sc_aux_roc_running ||
         ic->ic_awdl_listen_chan != chan || ic->ic_bss == NULL ||
         (sc->sc_flags & (IWX_FLAG_SHUTDOWN | IWX_FLAG_HW_ERR | IWX_FLAG_RFKILL))) {
@@ -12606,6 +12655,8 @@ iwx_rx_pkt(struct iwx_softc *sc, struct iwx_rx_data *data, struct mbuf_list *ml)
                         sc->sc_aux_roc_start_gp2 = le32toh(notif->timestamp);
                         sc->sc_ic.ic_awdl_roc_delay_us =
                             sc->sc_aux_roc_start_gp2 - sc->sc_aux_roc_apply_gp2;
+                        sc->sc_ic.ic_awdl_roc_start_us = iwx_uptime_us();
+                        iwx_awdl_delay_hist(&sc->sc_ic, sc->sc_ic.ic_awdl_roc_delay_us);
                         /* Count rx on the ROC channel from here (see rx path). */
                         sc->sc_awdl_listen_active = 1;
                     }
@@ -12700,6 +12751,8 @@ iwx_rx_pkt(struct iwx_softc *sc, struct iwx_rx_data *data, struct mbuf_list *ml)
                         sc->sc_awdl_listen_active = 1;
                         sc->sc_p2p_start_us = now;
                         ric->ic_awdl_roc_delay_us = (uint32_t)(now - sc->sc_p2p_req_us);
+                        ric->ic_awdl_roc_start_us = now;
+                        iwx_awdl_delay_hist(ric, ric->ic_awdl_roc_delay_us);
                     } else {
                         uint32_t us = (uint32_t)(now - sc->sc_p2p_start_us);
                         ric->ic_awdl_roc_last_us = us;
@@ -12711,6 +12764,7 @@ iwx_rx_pkt(struct iwx_softc *sc, struct iwx_rx_data *data, struct mbuf_list *ml)
                         sc->sc_aux_roc_running = 0;
                         sc->sc_awdl_listen_active = 0;
                         ric->ic_awdl_listen_done++;
+                        ric->ic_awdl_roc_end_us = now;
                     }
                     iwx_aux_roc_sync_counters(sc);
                     break;
@@ -14686,6 +14740,7 @@ iwx_attach(struct iwx_softc *sc, struct pci_attach_args *pa)
     ic->ic_bgscan_start = iwx_bgscan;
     ic->ic_awdl_listen = iwx_awdl_listen;
     ic->ic_awdl_tx = iwx_awdl_tx;
+    ic->ic_awdl_dwell_state = iwx_awdl_dwell_state;
     ic->ic_set_key = iwx_set_key;
     ic->ic_delete_key = iwx_delete_key;
     

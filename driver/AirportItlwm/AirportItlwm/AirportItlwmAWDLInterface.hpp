@@ -1,20 +1,26 @@
+// Modified by the ax210-airdrop-awdl-hackintosh project, 2026-11 (AWDL/AirDrop port to
+// macOS 15 Sequoia and related fixes). See CHANGES-FROM-UPSTREAM.md. License: GPL-2.0.
 //
 //  AirportItlwmAWDLInterface.hpp
 //  AirportItlwm
 //
-//  awdl0 for macOS 26 (Tahoe): the IO80211AWDLProtocol interface, a host-side
-//  availability-window timeline, listen/transmit on Intel P2P Device dwells and a data path.
-//  The contract was reverse-engineered from the macOS 26 IO80211Family and AppleBCMWLAN kexts.
+//  awdl0 for macOS 26 (Tahoe) and macOS 15 (Sequoia): the IO80211AWDLProtocol interface,
+//  a host-side availability-window timeline, listen/transmit on Intel P2P Device dwells and
+//  a data path. The contract was reverse-engineered from the macOS 26 IO80211Family and
+//  AppleBCMWLAN kexts; the Sequoia differences were checked against the 15.8.1 (24H32)
+//  kernel collection (see AIRPORT_AWDL_ABI_SEQUOIA below).
 //
 
 #ifndef AirportItlwmAWDLInterface_hpp
 #define AirportItlwmAWDLInterface_hpp
 
-#if defined(AIRPORT_WCL) && __IO80211_TARGET != __MAC_15_2
+#include "AirportItlwmAWDLConfig.h"
+
+#if defined(AIRPORT_AWDL)
 
 #include <Airport/Apple80211.h>
-#include <Airport/macOS26/IO80211VirtualInterface.h>
-#include <Airport/macOS26/IO80211AWDLProtocol.h>
+#include <Airport/IO80211VirtualInterfaceWCL.h>
+#include <Airport/IO80211AWDLProtocol.h>
 #include "AirportItlwmEthernetInterface.hpp"
 #include <IOKit/IOTimerEventSource.h>
 
@@ -25,13 +31,32 @@ struct ieee80211_rxinfo;
 // functions. Slot offsets are from the Tahoe kernel collection.
 class AWDLBufferPoolABI;
 class AWDLBufferABI;
+// Same mangled names on Sequoia 24H32: both are exported by IO80211Family and
+// imported by name by AppleBCMWLANCoreMac (verified in the 15.8.1 KC symtabs).
 extern "C" AWDLBufferPoolABI *IO80211VirtualInterface_getMgmtFramePool(IO80211VirtualInterface *)
     __asm__("__ZN23IO80211VirtualInterface16getMgmtFramePoolEv");
 extern "C" void IO80211VirtualInterface_bpfTapInput(IO80211VirtualInterface *, AWDLBufferABI *,
                                                     unsigned int, void *, unsigned long)
     __asm__("__ZN23IO80211VirtualInterface11bpfTapInputEP13IO80211BufferjPvm");
 
-// Role values used by IO80211 on Tahoe (apple80211_virtual_if_role).
+#if defined(AIRPORT_AWDL_ABI_SEQUOIA)
+// On 24H32 IO80211Buffer has no virtual methods of its own: __ZTV13IO80211Buffer ends
+// after OSObject::_RESERVEDOSObject15 at +0x110, so Tahoe's buffer slots (0x118..0x158)
+// would read past the vtable. Its methods are plain exported functions, called by name
+// exactly like AppleBCMWLANCoreMac does (it imports returnBuffer, setLength and
+// getBytesNoCopy by symbol). getCapacity is exported but not imported by Broadcom.
+extern "C" void IO80211Buffer_returnBuffer(AWDLBufferABI *)
+    __asm__("__ZN13IO80211Buffer12returnBufferEv");
+extern "C" void IO80211Buffer_setLength(AWDLBufferABI *, unsigned long)
+    __asm__("__ZN13IO80211Buffer9setLengthEm");
+// Return width not encoded in the mangled name: only the low 32 bits are trusted.
+extern "C" unsigned long IO80211Buffer_getCapacity(const AWDLBufferABI *)
+    __asm__("__ZNK13IO80211Buffer11getCapacityEv");
+extern "C" void *IO80211Buffer_getBytesNoCopy(AWDLBufferABI *)
+    __asm__("__ZN13IO80211Buffer14getBytesNoCopyEv");
+#endif
+
+// Role values used by IO80211 on Tahoe and Sequoia (apple80211_virtual_if_role).
 enum : unsigned int {
     kAirportItlwmRoleAWDL = 6,
 };
@@ -265,7 +290,53 @@ private:
     // during each aligned listen dwell.
     static void txTimerFired(OSObject *owner, IOTimerEventSource *sender);
     void scheduleTx(uint8_t chan, uint64_t slotStartUs);
-    void sendAWDLFrame(bool mi);
+    bool sendAWDLFrame(bool mi);
+    // TX pump (-itlawdltxpump): poll the firmware dwell during the slot and send
+    // PSF / MI / queued data whenever the dwell actually runs and the peer is there.
+    void pumpTick();
+    bool pumpCanSend(uint8_t *dwellChan, int *dwellState);
+    void noteRocStart();
+    int64_t listenLeadUs() const { return fListenLeadUs; }
+    uint32_t dwellExtraTU() const { return fDwellExtraTU; }
+    bool homeTxAllowed() const { return fHomeTx; }
+    // Behaviour switches (boot-args, also writable at run time via setProperties).
+    bool fTxPump;                   // -itlawdltxpump
+    bool fHomeTx;                   // -itlawdlhometx
+    uint32_t fPumpUs;               // itlawdlpumpus=
+    int64_t fListenLeadUs;          // itlawdllead= (default 6000)
+    uint32_t fDwellExtraTU;         // itlawdldwellx=
+    // Pump state and diagnostics.
+    uint64_t fTxReqUs;              // when the dwell for fTxSlotUs was requested
+    uint64_t fTxPumpEndUs;
+    bool fTxPumpPsfDone, fTxPumpMiDone, fTxPumpSawRun, fTxStartNoted;
+    uint64_t fPumpTicks, fPumpWindows, fPumpNoRun, fPumpPeerAway, fPumpImmediate, fPumpLateAF;
+    uint32_t fRocStartHist[8];      // dwell START - planned slot start
+    uint32_t fDataLatHist[8];       // enqueue -> handed to firmware
+    uint64_t fDataLatMaxUs;
+    uint64_t fDataQUs[256];         // enqueue time of fDataQ[i] (kDataQueueLen)
+    // Peer alignment (see research/AIRDROP-FAILURE-ANALYSIS.md). When we are
+    // the sync master the tracked peer should be on our timeline; these record
+    // whether it is, and -itlawdlfollow adopts the peer's timeline when not.
+    bool fFollowPeer;               // -itlawdlfollow / AWDLFollowPeerOn
+    ether_addr fPeerMaster;         // master address in the peer's sync parameters
+    int64_t fPeerOwnErrUs;          // peer slot boundary - ours (nearest)
+    uint16_t fPeerSlotOff;          // peer channel-sequence index - ours, mod 16
+    uint32_t fFollowStreak;         // consecutive misaligned frames of the tracked peer
+    uint64_t fPeerAlignedCnt, fPeerMisalignedCnt, fFollowAdopts;
+    uint64_t fPeerFollowsUsMis;     // misaligned although the peer names us as its master
+    uint64_t fPeerGateStale;        // TX not held back: tracked peer not heard recently
+    uint64_t fPeerSwitchData;       // tracked peer replaced by the peer we exchange data with
+    ether_addr fDataPeerMac;        // last unicast data peer (either direction)
+    uint64_t fDataPeerUs;
+    unsigned peerGateChannel(uint64_t us);
+    // Group-addressed vs unicast data (mDNS / ND vs TCP): separate counters.
+    uint8_t fDataQMc[256];          // fDataQ[i] is group-addressed
+    uint64_t fMcQueued, fMcTx;
+    uint32_t fMcLatHist[8];         // same buckets as fDataLatHist
+    uint64_t fGateHeldTicks;        // pump ticks with the dwell running, data queued, peer away
+    uint64_t fGateHeldMcTicks;      // ... and the head of the queue was group-addressed
+    uint64_t fDataTxDropStale;      // frames older than kDataMaxAgeUs dropped instead of sent
+    void publishTxDiag();
     size_t buildAWDLFrame(uint8_t *buf, size_t cap, bool mi, uint64_t nowUs);
     void publishTxState();
     void publishAWDLAddress();
@@ -275,11 +346,14 @@ public:
     uint64_t fDataRxBad;
     uint64_t fDataRxAmsdu;
     uint64_t fDataRxNoBuf;
+    uint64_t fDataRxMc;             // group-addressed frames delivered to awdl0
     uint32_t fDataRxLastLen;
     uint16_t fDataRxLastType;
     void publishDataState();
     // Ethernet frames from awdl0, sent as AWDL data frames during a dwell.
     void enqueueData(mbuf_t m);
+    // Unicast data to/from this station: it is the peer whose timeline matters.
+    void noteDataPeer(const uint8_t *mac);
     void flushData();
     // 32 overflowed during AirDrop (AWDLDataTxDropFull): data only
     // leaves in the peer's slots, so a burst from the stack has to wait.
@@ -293,6 +367,7 @@ public:
     uint64_t fDataTxDropFull;
     uint64_t fDataTxDeferred;
     uint64_t fDataTxErr;
+    void noteDataSent(unsigned idx);
 private:
     IOTimerEventSource *fTxTimer;
     uint8_t fTxChan;
@@ -311,7 +386,11 @@ private:
 
     uint64_t fRxAF;
     uint64_t fRxAFDropped;
+    uint64_t fRxAFNoInject;    // AFs not handed to IO80211 because of -itlawdlnoinject
     AirportItlwm *fController;
+    // The HAL's ieee80211com, or NULL once the controller dropped its HAL
+    // (AirportItlwm::releaseAll) or before init.
+    struct ieee80211com *halIc() const;
     ether_addr fMac;
     // Cached configuration, returned by the matching getters.
     apple80211_awdl_sync_params fSyncParams;
@@ -320,5 +399,5 @@ private:
     uint64_t fCallCount;
 };
 
-#endif /* AIRPORT_WCL && Tahoe */
+#endif /* AIRPORT_AWDL */
 #endif /* AirportItlwmAWDLInterface_hpp */

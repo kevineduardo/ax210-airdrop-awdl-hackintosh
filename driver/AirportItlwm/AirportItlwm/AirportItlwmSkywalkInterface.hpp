@@ -1,3 +1,5 @@
+// Modified by the ax210-airdrop-awdl-hackintosh project, 2026-11 (AWDL/AirDrop port to
+// macOS 15 Sequoia and related fixes). See CHANGES-FROM-UPSTREAM.md. License: GPL-2.0.
 //
 //  AirportItlwmSkywalkInterface.hpp
 //  AirportItlwm-Sonoma
@@ -14,6 +16,7 @@
 #endif
 
 #include <Airport/Apple80211.h>
+#include "AirportItlwmAWDLConfig.h"
 
 #ifdef AIRPORT_WCL
 #define AIRPORT_SKYWALK_OVERRIDE
@@ -301,7 +304,7 @@ public:
     virtual IOReturn setIE(apple80211_ie_data *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn setWOW_TEST(apple80211_wow_test_data *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn setSCANCACHE_CLEAR(void *) AIRPORT_SKYWALK_OVERRIDE;
-#if defined(AIRPORT_WCL) && __IO80211_TARGET != __MAC_15_2
+#if defined(AIRPORT_AWDL)
     virtual IOReturn setVIRTUAL_IF_CREATE(apple80211_virt_if_create_data *) AIRPORT_SKYWALK_OVERRIDE;
 #else
     virtual IOReturn setVIRTUAL_IF_CREATE(apple80211_virt_if_create_data *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }

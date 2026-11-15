@@ -1,3 +1,5 @@
+// Modified by the ax210-airdrop-awdl-hackintosh project, 2026-11 (strict, UUID-checked
+// BLE advertising-sets patch table for macOS 15.8.1). See CHANGES-FROM-UPSTREAM.md. License: GPL-2.0.
 //
 //  BlueToolFixup.cpp
 //  BrcmPatchRAM
@@ -12,6 +14,8 @@
 #include <Headers/kern_util.hpp>
 #include <Headers/kern_version.hpp>
 #include <Headers/kern_devinfo.hpp>
+
+#include <mach-o/loader.h>
 
 
 #define MODULE_SHORT "btlfx"
@@ -175,6 +179,21 @@ static const uint8_t kBadChipsetCheckPatched15_4[] =
 // unconditionally take the audio-publish path.
 
 // macOS 14.x/15.x/16.x (Sonoma/Sequoia/Tahoe)
+//
+// NOTE (behaviour intentionally unchanged): on macOS 15.8.1 (24H32, x86_64 LC_UUID
+// 9D4727A2-1FC2-3777-BE26-7BAD0ED65EF0) this 15-byte pattern matches TWICE, on different pages,
+// so both sites get patched (findAndReplace works per page):
+//   0x1003ea091  test r14d; je; lea/mov os_log handle; mov esi, 0x10 (ERROR);
+//                call -> outlined log "Failed to read BT clock"   <- the intended Read Clock gate
+//                (same function region as "Fast Connect A2DP Report Connection attempt").
+//   0x100229d2d  r14d = result of a virtual call (+0x1c8); mov esi, 0x11 (FAULT);
+//                call -> outlined log "Unable to get firmware image file buffer"
+//                (PCIe firmware loader path, near "PCIe successfully transferred firmware image file").
+//                Not intended; it forces "success" if the firmware image buffer could not be obtained.
+//                That path should not run with a USB dongle, so it is probably harmless, but it is a
+//                false positive. Proposed (NOT applied) fix: extend the pattern with the os_log type,
+//                i.e. append "48 89 DF BE 10 00 00 00" (mov rdi, rbx; mov esi, 0x10), which is unique on
+//                15.8.1 (only 0x1003ea091). Needs re-checking on 14.x and 26.x before adopting.
 static const uint8_t kFastConnectA2DPGateOriginal14_0[] =
 {
     0x45, 0x85, 0xF6,
@@ -348,6 +367,279 @@ static const uint8_t kAdvSetAddrResendPatched26[] =
     0x66, 0x0F, 0x1F, 0x44, 0x00, 0x00
 };
 
+// ---------------------------------------------------------------------------------------------
+// macOS 15.x Sequoia (Darwin 24.6.0), derived from 15.8.1 (24H32) x86_64 bluetoothd,
+// LC_UUID 9D4727A2-1FC2-3777-BE26-7BAD0ED65EF0. Same six sites and same logic as 26.4.1; the
+// vtable slots are 0x160 lower, the chipset field is at +0x2f8 instead of +0x334, and every
+// rel32/disp32 differs. Patterns 1-2 are exact (the slot is the only distinguishing byte);
+// 3-6 are masked (wildcards = 0x00 in find, 0x00 in mask). Each was checked to have exactly one
+// match in the 15.8.1 x86_64 slice, inside a single 4 KiB page
+// (research/verify-advsets.pl).
+// Replace masks only cover the bytes that change, so wildcarded bytes are left as they are.
+// ---------------------------------------------------------------------------------------------
+
+// 1. BT Spec advertising sets capability, 0x1003a657c on 15.8.1
+// mov rcx, [rax]; mov rdi, rax; call [rcx+0x860]; mov r14d, eax
+static const uint8_t kSpecAdvSetsCapOriginal24[] =
+{
+    0x48, 0x8B, 0x08,
+    0x48, 0x89, 0xC7,
+    0xFF, 0x91, 0x60, 0x08, 0x00, 0x00,
+    0x41, 0x89, 0xC6
+};
+
+// mov rcx, [rax]; mov rdi, rax; mov al, 1; nop x4; mov r14d, eax
+static const uint8_t kSpecAdvSetsCapPatched24[] =
+{
+    0x48, 0x8B, 0x08,
+    0x48, 0x89, 0xC7,
+    0xB0, 0x01, 0x90, 0x90, 0x90, 0x90,
+    0x41, 0x89, 0xC6
+};
+
+// 2. Extended scanning capability, 0x1003a2e46 on 15.8.1
+// mov rcx, [rax]; mov rdi, rax; call [rcx+0x848]; mov r14d, eax  (patched: same as 1)
+static const uint8_t kExtScanCapOriginal24[] =
+{
+    0x48, 0x8B, 0x08,
+    0x48, 0x89, 0xC7,
+    0xFF, 0x91, 0x48, 0x08, 0x00, 0x00,
+    0x41, 0x89, 0xC6
+};
+
+// 3. LE event mask, 0x100144a37 on 15.8.1
+// test eax, eax; lea rax, [mask1f]; lea rdx, [maskFull]; cmove rdx, rax -> drop the cmove
+static const uint8_t kLeEventMaskOriginal24[] =
+{
+    0x85, 0xC0,
+    0x48, 0x8D, 0x05, 0x00, 0x00, 0x00, 0x00,
+    0x48, 0x8D, 0x15, 0x00, 0x00, 0x00, 0x00,
+    0x48, 0x0F, 0x44, 0xD0
+};
+
+static const uint8_t kLeEventMaskMask24[] =
+{
+    0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00,
+    0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00,
+    0xFF, 0xFF, 0xFF, 0xFF
+};
+
+static const uint8_t kLeEventMaskPatched24[] =
+{
+    0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x0F, 0x1F, 0x40, 0x00
+};
+
+static const uint8_t kLeEventMaskPatchMask24[] =
+{
+    0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xFF, 0xFF, 0xFF, 0xFF
+};
+
+// 4. Advertising set random address, 0x10049d49e on 15.8.1
+// cmp dword [rax+0x2f8], 3; ja +0x23; xor edi, edi; call setter -> jmp +7 (skip only that call)
+static const uint8_t kAdvSetAddrOriginal24[] =
+{
+    0x83, 0xB8, 0x00, 0x00, 0x00, 0x00, 0x03,
+    0x77, 0x00,
+    0x31, 0xFF, 0xE8
+};
+
+static const uint8_t kAdvSetAddrMask24[] =
+{
+    0xFF, 0xFF, 0x00, 0x00, 0xFF, 0xFF, 0xFF,
+    0xFF, 0x00,
+    0xFF, 0xFF, 0xFF
+};
+
+static const uint8_t kAdvSetAddrPatched24[] =
+{
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xEB, 0x07,
+    0x00, 0x00, 0x00
+};
+
+static const uint8_t kAdvSetAddrPatchMask24[] =
+{
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xFF, 0xFF,
+    0x00, 0x00, 0x00
+};
+
+// 5. LE Extended Create Connection, 0x10049d0ee on 15.8.1
+// movzx edi, byte [rbp-0xa2]; call setter(gEnableExtendedCreateConnectionCommand);
+// movzx r15d, byte [rbp-...]  ->  mov edi, 1; nop2; call ...
+static const uint8_t kExtCreateConnOriginal24[] =
+{
+    0x0F, 0xB6, 0xBD, 0x00, 0xFF, 0xFF, 0xFF,
+    0xE8, 0x00, 0x00, 0x00, 0xFF,
+    0x44, 0x0F, 0xB6, 0xBD
+};
+
+static const uint8_t kExtCreateConnMask24[] =
+{
+    0xFF, 0xFF, 0xFF, 0x00, 0xFF, 0xFF, 0xFF,
+    0xFF, 0x00, 0x00, 0x00, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF
+};
+
+static const uint8_t kExtCreateConnPatched24[] =
+{
+    0xBF, 0x01, 0x00, 0x00, 0x00, 0x66, 0x90,
+    0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00
+};
+
+static const uint8_t kExtCreateConnPatchMask24[] =
+{
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00
+};
+
+// 6. Advertising set random address resend, 0x1001ca5ac on 15.8.1
+// mov esi, [rsi+rdi+3]; xor esi, [rcx+rdx+0xd11]; or esi, r8d; je +0x7f (short) -> nop2
+static const uint8_t kAdvSetAddrResendOriginal24[] =
+{
+    0x8B, 0x00, 0x00, 0x03,
+    0x33, 0x00, 0x00, 0x11, 0x0D, 0x00, 0x00,
+    0x44, 0x09, 0x00,
+    0x74, 0x00
+};
+
+static const uint8_t kAdvSetAddrResendMask24[] =
+{
+    0xFF, 0x00, 0x00, 0xFF,
+    0xFF, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0x00,
+    0xFF, 0x00
+};
+
+static const uint8_t kAdvSetAddrResendPatched24[] =
+{
+    0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00,
+    0x66, 0x90
+};
+
+static const uint8_t kAdvSetAddrResendPatchMask24[] =
+{
+    0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00,
+    0xFF, 0xFF
+};
+
+// ---------------------------------------------------------------------------------------------
+// Per-macOS tables for -btlfxadvsets
+// ---------------------------------------------------------------------------------------------
+
+static constexpr size_t kAdvSetsPatchCount = 6;
+static constexpr uint32_t kAdvSetsAllApplied = (1U << kAdvSetsPatchCount) - 1;
+
+struct AdvSetsPatch {
+    const char *name;           // logged as "[advsets] patched <name> in <path>"
+    const uint8_t *find;
+    const uint8_t *findMask;    // nullptr = exact match
+    const uint8_t *replace;
+    const uint8_t *replaceMask; // nullptr = replace every byte
+    size_t size;                // find/findMask/replace/replaceMask all have this size
+};
+
+struct AdvSetsTable {
+    const char *name;
+    KernelVersion kernel;
+    int minMinor, maxMinor;     // Darwin minor version range, inclusive
+    const uint8_t *uuid;        // x86_64 LC_UUID of the bluetoothd the table was verified on, or nullptr
+    const AdvSetsPatch *patches; // kAdvSetsPatchCount entries
+};
+
+#define ADVSETS_EXACT(n, f, r) { n, f, nullptr, r, nullptr, sizeof(f) }
+#define ADVSETS_MASKED(n, f, fm, r, rm) { n, f, fm, r, rm, sizeof(f) }
+
+static_assert(sizeof(kSpecAdvSetsCapOriginal24) == sizeof(kSpecAdvSetsCapPatched24), "size");
+static_assert(sizeof(kExtScanCapOriginal24) == sizeof(kSpecAdvSetsCapPatched24), "size");
+static_assert(sizeof(kLeEventMaskOriginal24) == sizeof(kLeEventMaskMask24) && sizeof(kLeEventMaskOriginal24) == sizeof(kLeEventMaskPatched24) && sizeof(kLeEventMaskOriginal24) == sizeof(kLeEventMaskPatchMask24), "size");
+static_assert(sizeof(kAdvSetAddrOriginal24) == sizeof(kAdvSetAddrMask24) && sizeof(kAdvSetAddrOriginal24) == sizeof(kAdvSetAddrPatched24) && sizeof(kAdvSetAddrOriginal24) == sizeof(kAdvSetAddrPatchMask24), "size");
+static_assert(sizeof(kExtCreateConnOriginal24) == sizeof(kExtCreateConnMask24) && sizeof(kExtCreateConnOriginal24) == sizeof(kExtCreateConnPatched24) && sizeof(kExtCreateConnOriginal24) == sizeof(kExtCreateConnPatchMask24), "size");
+static_assert(sizeof(kAdvSetAddrResendOriginal24) == sizeof(kAdvSetAddrResendMask24) && sizeof(kAdvSetAddrResendOriginal24) == sizeof(kAdvSetAddrResendPatched24) && sizeof(kAdvSetAddrResendOriginal24) == sizeof(kAdvSetAddrResendPatchMask24), "size");
+static_assert(sizeof(kSpecAdvSetsCapOriginal26) == sizeof(kSpecAdvSetsCapPatched26) && sizeof(kExtScanCapOriginal26) == sizeof(kSpecAdvSetsCapPatched26), "size");
+static_assert(sizeof(kLeEventMaskOriginal26) == sizeof(kLeEventMaskPatched26) && sizeof(kAdvSetAddrOriginal26) == sizeof(kAdvSetAddrPatched26), "size");
+static_assert(sizeof(kExtCreateConnOriginal26) == sizeof(kExtCreateConnPatched26) && sizeof(kAdvSetAddrResendOriginal26) == sizeof(kAdvSetAddrResendPatched26), "size");
+
+// The log names are the ones the original -btlfxadvsets build printed, so the
+// "[advsets] patched ..." lines look the same on every macOS version.
+static const AdvSetsPatch kAdvSetsPatches24[kAdvSetsPatchCount] = {
+    ADVSETS_EXACT("BT Spec advertising sets capability", kSpecAdvSetsCapOriginal24, kSpecAdvSetsCapPatched24),
+    ADVSETS_EXACT("extended scanning capability", kExtScanCapOriginal24, kSpecAdvSetsCapPatched24),
+    ADVSETS_MASKED("LE event mask", kLeEventMaskOriginal24, kLeEventMaskMask24, kLeEventMaskPatched24, kLeEventMaskPatchMask24),
+    ADVSETS_MASKED("advertising set random address", kAdvSetAddrOriginal24, kAdvSetAddrMask24, kAdvSetAddrPatched24, kAdvSetAddrPatchMask24),
+    ADVSETS_MASKED("extended create connection", kExtCreateConnOriginal24, kExtCreateConnMask24, kExtCreateConnPatched24, kExtCreateConnPatchMask24),
+    ADVSETS_MASKED("advertising set address resend", kAdvSetAddrResendOriginal24, kAdvSetAddrResendMask24, kAdvSetAddrResendPatched24, kAdvSetAddrResendPatchMask24),
+};
+
+// 26.4.1 patterns unchanged (exact, no masks), applied exactly as the original build did.
+static const AdvSetsPatch kAdvSetsPatches26[kAdvSetsPatchCount] = {
+    ADVSETS_EXACT("BT Spec advertising sets capability", kSpecAdvSetsCapOriginal26, kSpecAdvSetsCapPatched26),
+    ADVSETS_EXACT("extended scanning capability", kExtScanCapOriginal26, kSpecAdvSetsCapPatched26),
+    ADVSETS_EXACT("LE event mask", kLeEventMaskOriginal26, kLeEventMaskPatched26),
+    ADVSETS_EXACT("advertising set random address", kAdvSetAddrOriginal26, kAdvSetAddrPatched26),
+    ADVSETS_EXACT("extended create connection", kExtCreateConnOriginal26, kExtCreateConnPatched26),
+    ADVSETS_EXACT("advertising set address resend", kAdvSetAddrResendOriginal26, kAdvSetAddrResendPatched26),
+};
+
+#undef ADVSETS_EXACT
+#undef ADVSETS_MASKED
+
+// x86_64 LC_UUID of /usr/sbin/bluetoothd, macOS 15.8.1 (24H32)
+static const uint8_t kBluetoothdUuid24H32[16] =
+{
+    0x9D, 0x47, 0x27, 0xA2, 0x1F, 0xC2, 0x37, 0x77,
+    0xBE, 0x26, 0x7B, 0xAD, 0x0E, 0xD6, 0x5E, 0xF0
+};
+
+static const AdvSetsTable kAdvSetsTables[] = {
+    // Darwin 24.6.x covers 15.6 - 15.8.x; only the 24H32 build is verified (UUID gate).
+    { "macOS 15.8.1 (24H32)", KernelVersion::Sequoia, 6, 6, kBluetoothdUuid24H32, kAdvSetsPatches24 },
+    // Original crazyhulk table. No UUID recorded for 25E253 yet (fill it in with
+    // research/verify-advsets.pl on a 26.4.1 bluetoothd to make the gate strict there too).
+    { "macOS 26.4.1 (25E253)", KernelVersion::Tahoe, 0, 99, nullptr, kAdvSetsPatches26 },
+};
+
+// All-or-nothing gate.
+//
+// Patches are applied from cs_validate_page, one 4 KiB page at a time, as bluetoothd pages are
+// faulted in, so a page that was validated without a patch cannot be patched later. A pre-scan
+// of the whole binary is not possible there either (the VM object lock is held; reading the
+// file would deadlock). The decision is therefore taken up front from the Mach-O header page,
+// which dyld touches before any bluetoothd code runs:
+//   - the table's LC_UUID must equal the running bluetoothd's x86_64 LC_UUID. The six patterns
+//     were verified offline to match exactly once in that build, so either all six get applied
+//     (as their pages come in) or, on any other build, none is;
+//   - if a page containing a patch site is validated before the header page was seen, nothing
+//     is applied for this boot (Aborted).
+// Tables without a UUID (26.4.1) and -btlfxadvsetsany fall back to the previous per-page
+// behaviour (Unverified); the log then says so and reports how many of the six were applied.
+enum AdvSetsState : uint32_t {
+    AdvSetsDisabled = 0,   // boot-arg off or no table for this kernel
+    AdvSetsPending,        // waiting for the bluetoothd Mach-O header page
+    AdvSetsArmed,          // UUID verified, apply all
+    AdvSetsUnverified,     // no UUID to check against, apply per page (legacy)
+    AdvSetsRejected,       // UUID mismatch / not readable, apply none
+    AdvSetsAborted,        // patch site seen before the header, apply none
+};
+
+static const AdvSetsTable *advSetsTable = nullptr;
+static uint32_t advSetsState = AdvSetsDisabled;
+static uint32_t advSetsApplied = 0;   // bit i = patch i applied at least once
+static bool advSetsLoggedComplete = false;
+
 static bool shouldPatchBoardId = false;
 static bool shouldPatchAddress = false;
 static bool shouldPatchNvramCheck = false;
@@ -415,6 +707,123 @@ static bool searchAndPatchNamedWithMask(const void *haystack, size_t haystackSiz
     return searchAndPatchNamedWithMask(haystack, haystackSize, path, name, needle, findSize * sizeof(T), findMask, findMaskSize * sizeof(T), patch, replaceSize * sizeof(T), patchMask, replaceMaskSize * sizeof(T));
 }
 
+#pragma mark - -btlfxadvsets
+
+static void selectAdvSetsTable(bool anyBuild) {
+    int major = static_cast<int>(getKernelVersion());
+    int minor = static_cast<int>(getKernelMinorVersion());
+    for (size_t i = 0; i < arrsize(kAdvSetsTables); i++) {
+        auto &t = kAdvSetsTables[i];
+        if (getKernelVersion() == t.kernel && minor >= t.minMinor && minor <= t.maxMinor) {
+            advSetsTable = &t;
+            uint32_t state;
+            if (t.uuid == nullptr) {
+                state = AdvSetsUnverified;
+                SYSLOG(MODULE_SHORT, "[advsets] selected table %s for Darwin %d.%d (no bluetoothd UUID recorded, per-page mode)", t.name, major, minor);
+            } else if (anyBuild) {
+                state = AdvSetsUnverified;
+                SYSLOG(MODULE_SHORT, "[advsets] selected table %s for Darwin %d.%d (-btlfxadvsetsany: UUID check skipped, per-page mode)", t.name, major, minor);
+            } else {
+                state = AdvSetsPending;
+                SYSLOG(MODULE_SHORT, "[advsets] selected table %s for Darwin %d.%d (waiting for bluetoothd UUID check)", t.name, major, minor);
+            }
+            __atomic_store_n(&advSetsState, state, __ATOMIC_RELEASE);
+            return;
+        }
+    }
+    __atomic_store_n(&advSetsState, AdvSetsDisabled, __ATOMIC_RELEASE);
+    SYSLOG(MODULE_SHORT, "[advsets] no patch table for Darwin %d.%d, not patching", major, minor);
+}
+
+// Returns true if this page is the x86_64 Mach-O header of the binary. uuidFound tells whether
+// LC_UUID was found entirely inside the page.
+static bool readMachHeaderUuid(const void *data, uint8_t (&uuid)[16], bool &uuidFound) {
+    uuidFound = false;
+    auto header = static_cast<const mach_header_64 *>(data);
+    if (header->magic != MH_MAGIC_64 || header->cputype != CPU_TYPE_X86_64)
+        return false;
+    auto bytes = static_cast<const uint8_t *>(data);
+    size_t off = sizeof(mach_header_64);
+    for (uint32_t i = 0; i < header->ncmds; i++) {
+        if (off + sizeof(load_command) > PAGE_SIZE)
+            break;
+        auto lc = reinterpret_cast<const load_command *>(bytes + off);
+        if (lc->cmdsize < sizeof(load_command))
+            break;
+        if (lc->cmd == LC_UUID) {
+            if (off + sizeof(uuid_command) <= PAGE_SIZE) {
+                lilu_os_memcpy(uuid, reinterpret_cast<const uuid_command *>(lc)->uuid, sizeof(uuid));
+                uuidFound = true;
+            }
+            break;
+        }
+        off += lc->cmdsize;
+    }
+    return true;
+}
+
+static void patchAdvSets(const void *data, const char *path) {
+    uint32_t state = __atomic_load_n(&advSetsState, __ATOMIC_ACQUIRE);
+    if (state == AdvSetsDisabled || state == AdvSetsRejected || state == AdvSetsAborted || advSetsTable == nullptr)
+        return;
+
+    if (state == AdvSetsPending) {
+        uint8_t uuid[16] {};
+        bool uuidFound = false;
+        if (readMachHeaderUuid(data, uuid, uuidFound)) {
+            uint32_t next;
+            if (uuidFound && memcmp(uuid, advSetsTable->uuid, sizeof(uuid)) == 0) {
+                next = AdvSetsArmed;
+                SYSLOG(MODULE_SHORT, "[advsets] %s UUID matches table %s, applying all %u patches", path, advSetsTable->name, static_cast<unsigned>(kAdvSetsPatchCount));
+            } else {
+                next = AdvSetsRejected;
+                if (uuidFound)
+                    SYSLOG(MODULE_SHORT, "[advsets] %s UUID %02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X not verified for table %s, applying none",
+                           path, uuid[0], uuid[1], uuid[2], uuid[3], uuid[4], uuid[5], uuid[6], uuid[7],
+                           uuid[8], uuid[9], uuid[10], uuid[11], uuid[12], uuid[13], uuid[14], uuid[15], advSetsTable->name);
+                else
+                    SYSLOG(MODULE_SHORT, "[advsets] %s LC_UUID not found in the header page, applying none", path);
+            }
+            uint32_t expected = AdvSetsPending;
+            __atomic_compare_exchange_n(&advSetsState, &expected, next, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+            // The header page itself holds no code, nothing else to do for it.
+            return;
+        }
+
+        // Code page before the header page: if it holds a patch site we could never patch it
+        // afterwards, so give up for this boot rather than end up with a partial set.
+        for (size_t i = 0; i < kAdvSetsPatchCount; i++) {
+            auto &p = advSetsTable->patches[i];
+            size_t off = 0;
+            if (KernelPatcher::findPattern(p.find, p.findMask, p.size, data, PAGE_SIZE, &off)) {
+                uint32_t expected = AdvSetsPending;
+                if (__atomic_compare_exchange_n(&advSetsState, &expected, AdvSetsAborted, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+                    SYSLOG(MODULE_SHORT, "[advsets] %s site seen in %s before the Mach-O header was checked, applying none", p.name, path);
+                return;
+            }
+        }
+        return;
+    }
+
+    // Armed or Unverified: apply what is in this page.
+    for (size_t i = 0; i < kAdvSetsPatchCount; i++) {
+        auto &p = advSetsTable->patches[i];
+        if (KernelPatcher::findAndReplaceWithMask(const_cast<void *>(data), PAGE_SIZE,
+                                                  p.find, p.size, p.findMask, p.findMask ? p.size : 0,
+                                                  p.replace, p.size, p.replaceMask, p.replaceMask ? p.size : 0)) {
+            SYSLOG(MODULE_SHORT, "[advsets] patched %s in %s", p.name, path);
+            uint32_t applied = __atomic_or_fetch(&advSetsApplied, 1U << i, __ATOMIC_ACQ_REL);
+            if (applied == kAdvSetsAllApplied && !advSetsLoggedComplete) {
+                advSetsLoggedComplete = true;
+                SYSLOG(MODULE_SHORT, "[advsets] all %u patches applied (table %s%s)", static_cast<unsigned>(kAdvSetsPatchCount),
+                       advSetsTable->name, state == AdvSetsUnverified ? ", unverified build" : "");
+            } else if (state == AdvSetsUnverified) {
+                SYSLOG(MODULE_SHORT, "[advsets] unverified build: %u of %u patches applied so far", static_cast<unsigned>(__builtin_popcount(applied)), static_cast<unsigned>(kAdvSetsPatchCount));
+            }
+        }
+    }
+}
+
 
 #pragma mark - Patched functions
 
@@ -459,24 +868,9 @@ static void patched_cs_validate_page(vnode_t vp, memory_object_t pager, memory_o
                     SYSLOG(MODULE_SHORT, "[a2dpcheck] enabled for bluetoothd, but no known FastConnect Gate pattern was seen yet");
                 }
             }
-            if (shouldPatchSpecAdvSets &&
-                KernelPatcher::findAndReplace(const_cast<void *>(data), PAGE_SIZE, kSpecAdvSetsCapOriginal26, sizeof(kSpecAdvSetsCapOriginal26), kSpecAdvSetsCapPatched26, sizeof(kSpecAdvSetsCapPatched26)))
-                SYSLOG(MODULE_SHORT, "[advsets] patched BT Spec advertising sets capability in %s", path);
-            if (shouldPatchSpecAdvSets &&
-                KernelPatcher::findAndReplace(const_cast<void *>(data), PAGE_SIZE, kExtScanCapOriginal26, sizeof(kExtScanCapOriginal26), kSpecAdvSetsCapPatched26, sizeof(kSpecAdvSetsCapPatched26)))
-                SYSLOG(MODULE_SHORT, "[advsets] patched extended scanning capability in %s", path);
-            if (shouldPatchSpecAdvSets &&
-                KernelPatcher::findAndReplace(const_cast<void *>(data), PAGE_SIZE, kLeEventMaskOriginal26, sizeof(kLeEventMaskOriginal26), kLeEventMaskPatched26, sizeof(kLeEventMaskPatched26)))
-                SYSLOG(MODULE_SHORT, "[advsets] patched LE event mask in %s", path);
-            if (shouldPatchSpecAdvSets &&
-                KernelPatcher::findAndReplace(const_cast<void *>(data), PAGE_SIZE, kAdvSetAddrOriginal26, sizeof(kAdvSetAddrOriginal26), kAdvSetAddrPatched26, sizeof(kAdvSetAddrPatched26)))
-                SYSLOG(MODULE_SHORT, "[advsets] patched advertising set random address in %s", path);
-            if (shouldPatchSpecAdvSets &&
-                KernelPatcher::findAndReplace(const_cast<void *>(data), PAGE_SIZE, kExtCreateConnOriginal26, sizeof(kExtCreateConnOriginal26), kExtCreateConnPatched26, sizeof(kExtCreateConnPatched26)))
-                SYSLOG(MODULE_SHORT, "[advsets] patched extended create connection in %s", path);
-            if (shouldPatchSpecAdvSets &&
-                KernelPatcher::findAndReplace(const_cast<void *>(data), PAGE_SIZE, kAdvSetAddrResendOriginal26, sizeof(kAdvSetAddrResendOriginal26), kAdvSetAddrResendPatched26, sizeof(kAdvSetAddrResendPatched26)))
-                SYSLOG(MODULE_SHORT, "[advsets] patched advertising set address resend in %s", path);
+            // -btlfxadvsets: per-macOS table, all-or-nothing gate (see patchAdvSets)
+            if (shouldPatchSpecAdvSets)
+                patchAdvSets(data, path);
         }
     }
 }
@@ -510,8 +904,10 @@ static void pluginStart() {
             shouldPatchNvramCheck = checkKernelArgument("-btlfxnvramcheck");
         shouldPatchA2DPCheck = checkKernelArgument("-btlfxa2dpcheck");
         shouldPatchSpecAdvSets = checkKernelArgument("-btlfxadvsets");
-        if (shouldPatchSpecAdvSets)
+        if (shouldPatchSpecAdvSets) {
             SYSLOG(MODULE_SHORT, "[advsets] BT Spec LE advertising sets for third-party controllers enabled");
+            selectAdvSetsTable(checkKernelArgument("-btlfxadvsetsany"));
+        }
         if (shouldPatchA2DPCheck)
             SYSLOG(MODULE_SHORT, "[a2dpcheck] bluetoothd Read Clock workaround enabled (fast-connect A2DP bypass)");
         KernelPatcher::RouteRequest csRoute = KernelPatcher::RouteRequest("_cs_validate_page", patched_cs_validate_page, orig_cs_validate);

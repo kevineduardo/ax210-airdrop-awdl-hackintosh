@@ -1,3 +1,5 @@
+// Modified by the ax210-airdrop-awdl-hackintosh project, 2026-11 (AWDL/AirDrop port to
+// macOS 15 Sequoia and related fixes). See CHANGES-FROM-UPSTREAM.md. License: GPL-2.0.
 /*
  * Copyright (C) 2020  钟先耀
  *
@@ -218,6 +220,9 @@ ieee80211_channel_init(struct _ifnet *ifp)
         ic->ic_curmode = IEEE80211_MODE_AUTO;
     ic->ic_des_chan = IEEE80211_CHAN_ANYC;    /* any channel is ok */
 }
+
+/* The one definition of the layout fingerprint, see ieee80211_var.h. */
+template <> const char IEEE80211_LAYOUT_TAG::tag = 1;
 
 void
 ieee80211_ifattach(struct _ifnet *ifp, IOEthernetController *controller)

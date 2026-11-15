@@ -1,5 +1,10 @@
 BrcmPatchRAM Changelog
 ======================
+#### v2.7.3 (local port, unreleased)
+- `-btlfxadvsets`: per-macOS patch tables (Sequoia 15.8.1 24H32 added, Tahoe 26.4.1 unchanged)
+- `-btlfxadvsets`: all-or-nothing gate on the bluetoothd x86_64 LC_UUID; logs the selected table
+- Added `-btlfxadvsetsany` to skip the UUID gate (per-page best effort, for testing other builds)
+
 #### v2.7.2
 - Added `bluetoothd` patches for macOS 26 (thx @spotlightishere et al)
 

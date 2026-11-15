@@ -1,0 +1,177 @@
+# SPDX-License-Identifier: MIT
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  MACKERNELSDK_REF: 3f750085caa17ec3a7880f11c11bf4f48cd6a164
+  LILU_VERSION: 1.7.2
+
+jobs:
+  tests-linux:
+    name: Tests (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - run: sudo apt-get install -y -qq shellcheck zsh >/dev/null
+      - run: tests/run.sh
+
+  tests-macos:
+    name: Tests (macOS)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - run: brew install shellcheck >/dev/null 2>&1 || true
+      - run: tests/run.sh
+
+  airportitlwm:
+    name: AirportItlwm ${{ matrix.platform }} ${{ matrix.configuration }}
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [Sequoia, Tahoe]
+        configuration: [Debug, Release]
+    defaults:
+      run:
+        working-directory: driver/AirportItlwm
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: acidanthera/MacKernelSDK
+          ref: ${{ env.MACKERNELSDK_REF }}
+          path: driver/AirportItlwm/MacKernelSDK
+      - name: Select Xcode
+        run: |
+          if [ -d /Applications/Xcode_16.4.app ]; then sudo xcode-select -s /Applications/Xcode_16.4.app; fi
+          xcodebuild -version
+      - name: Build
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          CONFIGURATION: ${{ matrix.configuration }}
+        run: |
+          set -euo pipefail
+          mkdir -p logs
+          xcodebuild -project itlwm.xcodeproj -scheme "AirportItlwm-$PLATFORM" -configuration "$CONFIGURATION" \
+            -jobs 3 ARCHS=x86_64 SYMROOT="$PWD/build/products" OBJROOT="$PWD/build/obj" \
+            DEBUG_INFORMATION_FORMAT=dwarf-with-dsym CODE_SIGNING_ALLOWED=NO \
+            GIT_COMMIT="-awdl-$(git rev-parse --short HEAD)" \
+            build > "logs/build.log" 2>&1 || { tail -150 logs/build.log; exit 1; }
+          grep -E 'warning:' logs/build.log | sort -u | tail -40 || true
+      - name: Post-build checks
+        run: ../../tests/run.sh kext "build/products/${{ matrix.configuration }}/${{ matrix.platform }}"
+      - name: Package
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          CONFIGURATION: ${{ matrix.configuration }}
+        run: |
+          set -euo pipefail
+          out="$GITHUB_WORKSPACE/dist"; mkdir -p "$out"
+          products="build/products/$CONFIGURATION/$PLATFORM"
+          name="AirportItlwm-AWDL-$PLATFORM-$CONFIGURATION"
+          ditto -c -k --keepParent "$products/AirportItlwm.kext" "$out/$name.zip"
+          ditto -c -k --keepParent "$products/AirportItlwm.kext.dSYM" "$out/$name-dSYM.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: AirportItlwm-AWDL-${{ matrix.platform }}-${{ matrix.configuration }}
+          path: dist/*.zip
+
+  bluetoolfixup:
+    name: BlueToolFixup ${{ matrix.configuration }}
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Debug, Release]
+    defaults:
+      run:
+        working-directory: driver/BlueToolFixup
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: acidanthera/MacKernelSDK
+          ref: ${{ env.MACKERNELSDK_REF }}
+          path: driver/BlueToolFixup/MacKernelSDK
+      - name: Fetch Lilu ${{ env.LILU_VERSION }} (DEBUG, needed to build plugins)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download "$LILU_VERSION" -R acidanthera/Lilu -p "Lilu-$LILU_VERSION-DEBUG.zip" -D /tmp/lilu
+          unzip -q "/tmp/lilu/Lilu-$LILU_VERSION-DEBUG.zip" -d /tmp/lilu
+          cp -R /tmp/lilu/Lilu.kext ./Lilu.kext
+      - name: Select Xcode
+        run: if [ -d /Applications/Xcode_16.4.app ]; then sudo xcode-select -s /Applications/Xcode_16.4.app; fi
+      - name: Build
+        run: |
+          set -euo pipefail
+          xcodebuild -project BrcmPatchRAM.xcodeproj -target BlueToolFixup -configuration "${{ matrix.configuration }}" \
+            -jobs 3 ARCHS=x86_64 CODE_SIGNING_ALLOWED=NO > build.log 2>&1 || { tail -150 build.log; exit 1; }
+      - name: Package
+        run: |
+          set -euo pipefail
+          out="$GITHUB_WORKSPACE/dist"; mkdir -p "$out"
+          ditto -c -k --keepParent "build/${{ matrix.configuration }}/BlueToolFixup.kext" \
+            "$out/BlueToolFixup-advsets-${{ matrix.configuration }}.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: BlueToolFixup-${{ matrix.configuration }}
+          path: dist/*.zip
+
+  awdlctl:
+    name: awdlctl
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          make -C tools/awdlctl CFLAGS="-O2 -Wall -Wextra -Werror -std=c11 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0"
+          mkdir -p dist && ditto -c -k tools/awdlctl/awdlctl dist/awdlctl-universal.zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: awdlctl
+          path: dist/*.zip
+
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [tests-linux, tests-macos, airportitlwm, bluetoolfixup, awdlctl]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          cd artifacts && sha256sum -- *.zip > SHA256SUMS.txt && cd ..
+          ver=${TAG#v}
+          awk -v v="$ver" '$0 ~ "^## \\[" v "\\]" {p=1; next} /^## \[/ {if (p) exit} p' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "See CHANGELOG.md" > notes.md
+          pre=""; case "$TAG" in *-*) pre="--prerelease" ;; esac
+          gh release create "$TAG" $pre --title "$TAG: AirDrop/AWDL for Intel Wi-Fi on macOS Sequoia and Tahoe" \
+            --notes-file notes.md artifacts/*.zip artifacts/SHA256SUMS.txt
