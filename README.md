@@ -8,7 +8,7 @@ Native Wi-Fi, **AWDL** (Apple Wireless Direct Link) and **AirDrop** for the **In
 
 This is a fork of [AirportItlwm](https://github.com/OpenIntelWireless/itlwm) (OpenIntelWireless, via laobamac and crazyhulk) that brings crazyhulk's experimental Tahoe AWDL code to **macOS 15 Sequoia** and fixes what kept AirDrop transfers from finishing. It ships with a [BlueToolFixup](https://github.com/acidanthera/BrcmPatchRAM) build that turns on BLE advertising sets, so iPhones can find the Mac in the AirDrop sheet.
 
-> **Status: experimental beta.** AirDrop works in both directions on the test machine (Sequoia 15.8.1, AX210). Read [what is tested](#what-works) before you install it, and keep a known-good EFI on a USB stick.
+> **Status: experimental beta.** AirDrop works in both directions on the test machine (Sequoia 15.8.1, AX210), and the Tahoe build has been tested on hardware too. Read [what is tested](#what-works) before you install it, and keep a known-good EFI on a USB stick.
 
 ## What works
 
@@ -31,7 +31,7 @@ Tested on an AMD Ryzen 5 5600G desktop with an Intel AX210 (PCIe, Bluetooth over
 | macOS | Wi-Fi | AWDL / AirDrop | Notes |
 |---|---|---|---|
 | 15 **Sequoia** | Yes | **Yes, tested on 15.8.1** | AWDL layouts checked against the 15.8.1 kernel. Other 15.x builds may have different IO80211Family vtables (15.0.1 does): start with `-itlawdlnoinject` and see [porting to a new macOS build](docs/porting-awdl-to-new-macos-versions.md). |
-| 26 **Tahoe** | Yes | Builds; AWDL code is crazyhulk's original plus our fixes | Our Tahoe build is **not tested on hardware yet**. Reports welcome. The BLE advsets table targets 26.4.1. |
+| 26 **Tahoe** | Yes | **Yes, tested on hardware by the maintainer** | AWDL code is crazyhulk's original plus our fixes. The BLE advsets table targets 26.4.1. More reports from other machines are welcome. |
 | 14 **Sonoma** and older | Use upstream [itlwm releases](https://github.com/OpenIntelWireless/itlwm/releases) | **No** | AirportItlwm's Sonoma builds use an older IO80211 interface and the AWDL code is only built for Sequoia and Tahoe. See [what a Sonoma port would take](docs/porting-awdl-to-new-macos-versions.md#sonoma-and-older). |
 
 ### Cards

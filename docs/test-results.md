@@ -56,8 +56,8 @@ Full analysis: [research/airdrop-master-election-and-multicast.md](research/aird
 | Bluetooth | keyboard, mouse, AirPods, sleep/wake | not tested |
 | Continuity | Handoff, Universal Clipboard, AirPlay to Mac, Universal Control | not tested |
 | Stability | 24 h | not tested |
-| Tahoe | any | not tested with this fork's build |
+| Tahoe | Tahoe build of this fork | tested on hardware by the maintainer |
 
 ## Help wanted
 
-Reports from other machines are the most useful contribution right now: other Intel cards (AX200, AX201, AX211), Tahoe, other Sequoia builds, Intel CPUs, laptops, and SIP fully enabled. Use the "Test report" issue template.
+Reports from other machines are the most useful contribution right now: other Intel cards (AX200, AX201, AX211), more Tahoe machines, other Sequoia builds, Intel CPUs, laptops, and SIP fully enabled. Use the "Test report" issue template.
