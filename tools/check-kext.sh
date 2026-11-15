@@ -66,6 +66,15 @@ else
     echo "skip DWARF check (no dSYM at $kext.dSYM)"
 fi
 
+# Without a symbol list the running system's boot kernel collection is used (defined symbols
+# only), so the check always runs for a kext built for this macOS. An import that does not
+# resolve makes OpenCore refuse the kext ("Prelinked injection ... Invalid Parameter") and
+# the machine boots without Wi-Fi. NO_KC=1 skips it (kexts built for another macOS, CI).
+if [ $# -lt 2 ] && [ "${NO_KC:-0}" != 1 ]; then
+    xcrun nm /System/Library/KernelCollections/BootKernelExtensions.kc 2>/dev/null |
+        awk 'NF == 3 && $2 != "U" {print $3}' > "$tmp/kc-live"
+    set -- "$kext" "$tmp/kc-live"
+fi
 if [ $# -ge 2 ]; then
     sort -u "$2" > "$tmp/kc"
     if [ $# -ge 3 ]; then sort -u "$3" > "$tmp/base"; else : > "$tmp/base"; fi

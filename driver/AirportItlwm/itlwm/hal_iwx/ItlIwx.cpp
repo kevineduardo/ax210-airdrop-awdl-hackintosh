@@ -141,7 +141,14 @@ static int iwx_awdl_band(uint8_t chan);
 #ifdef IWX_DEBUG
 #define DPRINTF(x)    do { if (iwx_debug > 0) XYLog x; } while (0)
 #define DPRINTFN(n, x)    do { if (iwx_debug >= (n)) XYLog x; } while (0)
+// Release builds stay quiet: at level 1 every firmware command is logged twice (send + done),
+// and AWDL sends several session-protection commands per second, which was a third of the
+// kernel message buffer (and console output with -v). Debug builds keep level 1.
+#if DEBUG
 int iwx_debug = 1;
+#else
+int iwx_debug = 0;
+#endif
 #else
 #define DPRINTF(x)    do { ; } while (0)
 #define DPRINTFN(n, x)    do { ; } while (0)
@@ -367,6 +374,94 @@ int16_t ItlIwx::
 getBSSNoise()
 {
     return com.sc_noise;
+}
+
+int ItlIwx::
+getChannelLoad()
+{
+    return com.sc_chan_load;
+}
+
+// Linux iwl_mvm_request_statistics(): with STATISTICS_NOTIFICATION v15 the command reply is
+// empty and the firmware answers with the notification, so the command can be asynchronous.
+// Older layouts are left alone (they were never requested by this driver).
+void ItlIwx::
+getStatisticsInfo(char *buf, size_t len)
+{
+    struct iwx_softc *sc = &com;
+    snprintf(buf, len, "notif_ver %u req %u samples %u err %d len %u hdr %u/%u last rx %u tx %u on %u usec load %d",
+             sc->sc_stats_ver, sc->sc_stats_req, sc->sc_stats_ntfy, sc->sc_stats_err, sc->sc_stats_len,
+             sc->sc_stats_hdr_type, sc->sc_stats_hdr_ver, sc->sc_stats_last_rx, sc->sc_stats_last_tx,
+             sc->sc_stats_last_on, sc->sc_chan_load);
+}
+
+void ItlIwx::
+requestStatistics()
+{
+    struct iwx_softc *sc = &com;
+    struct iwx_statistics_cmd scmd = { .flags = 0 };
+    uint8_t ver = iwx_lookup_notif_ver(sc, IWX_LEGACY_GROUP, IWX_STATISTICS_NOTIFICATION);
+
+    sc->sc_stats_ver = ver;
+    if (sc->sc_ic.ic_state != IEEE80211_S_RUN || !sc->sc_uc.uc_ok || ver == IWX_FW_CMD_VER_UNKNOWN)
+        return;
+    sc->sc_stats_req++;
+    if (ver == 15) {
+        iwx_send_cmd_pdu(sc, IWX_STATISTICS_CMD, IWX_CMD_ASYNC, sizeof(scmd), &scmd);
+        return;
+    }
+    if (ver != 14)
+        return;
+
+    // Version 14 (firmware -68 on the AX210): the statistics are the command reply. There is
+    // no channel-load field; the busy share of the radio's awake time, (rx + tx) / on_time_rf
+    // between two samples (the figures Linux reports as survey time_rx/time_tx/time), is used
+    // as the channel load.
+    struct iwx_host_cmd cmd = {
+        .id = IWX_STATISTICS_CMD,
+        .len = { sizeof(scmd), },
+        .data = { &scmd, },
+        .flags = IWX_CMD_WANT_RESP,
+        .resp_pkt_len = IWX_CMD_RESP_MAX,
+    };
+    int err = iwx_send_cmd(sc, &cmd);
+    if (err != 0 || cmd.resp_pkt == NULL) {
+        sc->sc_stats_err = err ? err : -1;
+        return;
+    }
+    struct iwx_rx_packet *pkt = cmd.resp_pkt;
+    sc->sc_stats_len = iwx_rx_packet_payload_len(pkt);
+    sc->sc_stats_err = sc->sc_stats_len < sizeof(struct iwx_statistics_operational_ntfy_ver_14) ? -2 : -3;
+    if (sc->sc_stats_len >= sizeof(struct iwx_statistics_ntfy_hdr)) {
+        sc->sc_stats_hdr_type = pkt->data[0];
+        sc->sc_stats_hdr_ver = pkt->data[1];
+    }
+    struct iwx_statistics_operational_ntfy_ver_14 *st = (struct iwx_statistics_operational_ntfy_ver_14 *)pkt->data;
+    if (!(pkt->hdr.group_id & IWX_CMD_FAILED_MSK) &&
+        iwx_rx_packet_payload_len(pkt) >= sizeof(*st) &&
+        (st->hdr.type & IWX_STATISTICS_TYPE_MSK) == IWX_FW_STATISTICS_OPERATIONAL &&
+        st->hdr.version == 14) {
+        uint64_t rx = le64toh(st->rx_time), tx = le64toh(st->tx_time), on = le64toh(st->on_time_rf);
+        if (sc->sc_stats_ntfy && on > sc->sc_stats_on_time && rx >= sc->sc_stats_rx_time &&
+            tx >= sc->sc_stats_tx_time) {
+            sc->sc_stats_last_rx = (uint32_t)(rx - sc->sc_stats_rx_time);
+            sc->sc_stats_last_tx = (uint32_t)(tx - sc->sc_stats_tx_time);
+            sc->sc_stats_last_on = (uint32_t)(on - sc->sc_stats_on_time);
+            uint64_t busy = (rx - sc->sc_stats_rx_time) + (tx - sc->sc_stats_tx_time);
+            uint64_t d = on - sc->sc_stats_on_time;
+            uint64_t load = busy * 100 / d;
+            sc->sc_chan_load = load > 100 ? 100 : (int)load;
+            if (sc->sc_stats_ntfy <= 4)
+                XYLog("statistics v14: rx %llu tx %llu on %llu usec -> load %d%%\n",
+                      rx - sc->sc_stats_rx_time, tx - sc->sc_stats_tx_time, d, sc->sc_chan_load);
+        } else {
+            sc->sc_chan_load = -1;     // first sample, or the counters restarted
+        }
+        sc->sc_stats_err = 0;
+        sc->sc_stats_rx_time = rx; sc->sc_stats_tx_time = tx; sc->sc_stats_on_time = on;
+        sc->sc_stats_ntfy++;
+    }
+    iwx_free_resp(sc, &cmd);
 }
 
 bool ItlIwx::
@@ -6280,6 +6375,55 @@ iwx_rx_tx_cmd(struct iwx_softc *sc, struct iwx_rx_packet *pkt,
                 sc->sc_ic.ic_awdl_tx_fail++;
                 sc->sc_ic.ic_awdl_tx_last_status = st;
             }
+            {
+                /* Rate adaptation for unicast AWDL data (iwx_awdl_tx_frame). */
+                unsigned slot = ((idx + ring->ring_count - 1) % ring->ring_count) & 4095;
+                uint8_t used = sc->sc_awdl_tx_rate[slot];
+                sc->sc_awdl_tx_rate[slot] = 0;
+                if (sc->sc_awdl_rate_hold && used && --sc->sc_awdl_rate_hold == 0)
+                    sc->sc_awdl_rate_ceiling = 0xff;
+                if (used && used - 1 == sc->sc_awdl_rate_idx) {
+                    if (sc->sc_awdl_rate_since_up < 0xffff)
+                        sc->sc_awdl_rate_since_up++;
+                    if (st != IWX_TX_STATUS_SUCCESS || tx_resp->failure_frame >= 2) {
+                        /*
+                         * An AWDL frame is also lost when the peer is simply not listening
+                         * (asleep, on another channel): 23025417 fell from 24 to 6 Mbps on
+                         * its first five idle frames. One loss says nothing about the rate;
+                         * step down on the third bad frame that was not offset by clean ones.
+                         */
+                        sc->sc_awdl_rate_clean = 0;
+                        if (++sc->sc_awdl_rate_bad >= 3) {
+                            sc->sc_awdl_rate_bad = 0;
+                            /* Failing right after stepping up: do not probe that step again soon. */
+                            if (sc->sc_awdl_rate_since_up < 30 && sc->sc_awdl_rate_idx > 0) {
+                                sc->sc_awdl_rate_ceiling = sc->sc_awdl_rate_idx - 1;
+                                sc->sc_awdl_rate_hold = 2000;
+                            }
+                            if (sc->sc_awdl_rate_idx > 2) {         /* not below 24 Mbps */
+                                sc->sc_awdl_rate_idx--;
+                                sc->sc_awdl_rate_down++;
+                            }
+                        }
+                    } else if (tx_resp->failure_frame == 0) {
+                        if (sc->sc_awdl_rate_bad && (++sc->sc_awdl_rate_forgive & 7) == 0)
+                            sc->sc_awdl_rate_bad--;
+                        if (++sc->sc_awdl_rate_clean >= 40) {
+                            sc->sc_awdl_rate_clean = 0;
+                            if (sc->sc_awdl_rate_idx + 1 < sc->sc_awdl_rate_steps &&
+                                (!sc->sc_awdl_rate_hold || sc->sc_awdl_rate_idx < sc->sc_awdl_rate_ceiling)) {
+                                sc->sc_awdl_rate_idx++;
+                                sc->sc_awdl_rate_up++;
+                                sc->sc_awdl_rate_since_up = 0;
+                                sc->sc_awdl_rate_bad = 0;
+                            }
+                        }
+                    }
+                }
+                sc->sc_ic.ic_awdl_tx_rate_idx = sc->sc_awdl_rate_idx;
+                sc->sc_ic.ic_awdl_tx_rate_up = sc->sc_awdl_rate_up;
+                sc->sc_ic.ic_awdl_tx_rate_down = sc->sc_awdl_rate_down;
+            }
             int band = iwx_awdl_band(sc->sc_ic.ic_awdl_listen_chan);
             if (st == IWX_TX_STATUS_SUCCESS)
                 sc->sc_ic.ic_awdl_tx_ok_band[band]++;
@@ -9327,12 +9471,96 @@ iwx_awdl_tx_frame(struct iwx_softc *sc, const uint8_t *frame, size_t len)
     cmd->hdr.qid = ring->qid;
     cmd->hdr.idx = idx;
     
-    uint32_t rate_n_flags = (1 << sc->sc_mgmt_last_antenna_idx) << IWX_RATE_MCS_ANT_POS;
+    /*
+     * Rate. Action frames and group-addressed data stay at 6 Mbps so that every peer hears
+     * them. Unicast data was sent at 6 Mbps too: a 1.1 kB frame takes ~1.5 ms of air, and
+     * AirDrop ran at 130-170 kB/s with every frame leaving the queue at once (2026-11-13).
+     * Unicast data now climbs a ladder adapted from the firmware's TX status (iwx_rx_tx_cmd):
+     * one step up after 40 frames acknowledged at the first attempt, one step down when a
+     * frame fails or needs two retries; a step that fails straight away is not retried for
+     * the next 2000 frames. The ladder depends on what the cached peer announced
+     * (ic_awdl_peer_caps): legacy OFDM only, HT one/two streams, VHT two streams MCS 8.
+     * All at 20 MHz, the width of the P2P PHY context the dwell runs on.
+     * -itlawdlfixedrate keeps 6 Mbps; -itlawdllegacyrate stops at 54 Mbps.
+     */
+    static int adaptive = -1, htAllowed = -1;
+    if (adaptive < 0) {
+        int v;
+        adaptive = PE_parse_boot_argn("-itlawdlfixedrate", &v, sizeof(v)) ? 0 : 1;
+        htAllowed = PE_parse_boot_argn("-itlawdllegacyrate", &v, sizeof(v)) ? 0 : 1;
+    }
     uint8_t cmdver = iwx_lookup_cmd_ver(sc, IWX_LONG_GROUP, IWX_TX_CMD);
-    if (cmdver > 8 && cmdver != IWX_FW_CMD_VER_UNKNOWN)
-        rate_n_flags |= IWX_RATE_MCS_LEGACY_OFDM_MSK | 0;  /* legacy index 0 = 6 Mbps */
+    const bool newRate = cmdver > 8 && cmdver != IWX_FW_CMD_VER_UNKNOWN;
+    const bool ucData = adaptive == 1 &&
+        (frame[0] & IEEE80211_FC0_TYPE_MASK) == IEEE80211_FC0_TYPE_DATA && !(frame[4] & 1);
+    /* kind: 0 legacy OFDM (code = OFDM index), 1 HT, 2 VHT (code = MCS, nss streams) */
+    struct awdl_rate { uint8_t kind, code, nss; uint16_t mbps; };
+    static const struct awdl_rate legacy[] = {
+        { 0, 0, 1, 6 }, { 0, 2, 1, 12 }, { 0, 4, 1, 24 }, { 0, 5, 1, 36 }, { 0, 6, 1, 48 }, { 0, 7, 1, 54 },
+    };
+    static const struct awdl_rate ht[] = {
+        { 0, 0, 1, 6 }, { 0, 2, 1, 12 }, { 0, 4, 1, 24 },
+        { 1, 4, 1, 39 }, { 1, 5, 1, 52 }, { 1, 7, 1, 65 },
+        { 1, 4, 2, 78 }, { 1, 5, 2, 104 }, { 1, 7, 2, 130 },
+        { 2, 8, 2, 173 },
+    };
+    uint8_t caps = 0;
+    if (ucData && htAllowed == 1 && newRate && IEEE80211_ADDR_EQ(frame + 4, ic->ic_awdl_peer_mac))
+        caps = ic->ic_awdl_peer_caps;
+    if (!iwx_mimo_enabled(sc) || iwx_num_of_ant(iwx_fw_valid_tx_ant(sc)) < 2)
+        caps &= ~(IEEE80211_AWDL_PEER_HT2 | IEEE80211_AWDL_PEER_VHT2);
+    const struct awdl_rate *ladder = legacy;
+    unsigned steps = nitems(legacy);
+    if (caps & IEEE80211_AWDL_PEER_HT) {
+        ladder = ht;
+        steps = 6;                                          /* HT one stream */
+        if (caps & IEEE80211_AWDL_PEER_HT2) {
+            steps = 9;                                      /* HT two streams */
+            if ((caps & (IEEE80211_AWDL_PEER_VHT2 | IEEE80211_AWDL_PEER_VHT_M8)) ==
+                (IEEE80211_AWDL_PEER_VHT2 | IEEE80211_AWDL_PEER_VHT_M8))
+                steps = 10;                                 /* VHT two streams MCS 8 */
+        }
+    }
+    if (ucData && (!sc->sc_awdl_rate_init || sc->sc_awdl_rate_caps != caps)) {
+        /* New peer or new capabilities: restart at 24 Mbps, which every ladder has. */
+        sc->sc_awdl_rate_init = 1;
+        sc->sc_awdl_rate_caps = caps;
+        sc->sc_awdl_rate_idx = 2;
+        sc->sc_awdl_rate_clean = 0;
+        sc->sc_awdl_rate_hold = 0;
+        sc->sc_awdl_rate_bad = 0;
+        sc->sc_awdl_rate_since_up = 0xffff;
+    }
+    /* Action and group frames (ucData false) leave the data ladder's state alone. */
+    if (ucData) {
+        if (sc->sc_awdl_rate_idx >= steps)
+            sc->sc_awdl_rate_idx = steps - 1;
+        sc->sc_awdl_rate_steps = steps;
+    }
+    const uint8_t step = ucData ? sc->sc_awdl_rate_idx : 0;
+    const struct awdl_rate *r = &ladder[step];
+    sc->sc_awdl_tx_rate[idx & 4095] = ucData ? step + 1 : 0;
+    if (ucData)
+        ic->ic_awdl_tx_rate_mbps = r->mbps;
+    static const uint8_t ofdmPlcp[8] = {
+        IWX_RATE_6M_PLCP, IWX_RATE_9M_PLCP, IWX_RATE_12M_PLCP, IWX_RATE_18M_PLCP,
+        IWX_RATE_24M_PLCP, IWX_RATE_36M_PLCP, IWX_RATE_48M_PLCP, IWX_RATE_54M_PLCP
+    };
+    uint32_t rate_n_flags;
+    if (r->nss == 2)
+        rate_n_flags = IWX_RATE_MCS_ANT_AB_MSK;
     else
-        rate_n_flags |= IWX_RATE_6M_PLCP;
+        rate_n_flags = (1 << sc->sc_mgmt_last_antenna_idx) << IWX_RATE_MCS_ANT_POS;
+    if (!newRate)
+        rate_n_flags |= ofdmPlcp[r->code & 7];              /* old format: legacy ladder only */
+    else if (r->kind == 0)
+        rate_n_flags |= IWX_RATE_MCS_LEGACY_OFDM_MSK | r->code;
+    else if (r->kind == 1)
+        rate_n_flags |= IWX_RATE_MCS_HT_MSK | IWX_RATE_MCS_CHAN_WIDTH_20 |
+            (r->code & IWX_RATE_HT_MCS_CODE_MSK) | ((r->nss - 1) << IWX_RATE_MCS_NSS_POS);
+    else
+        rate_n_flags |= IWX_RATE_MCS_VHT_MSK | IWX_RATE_MCS_CHAN_WIDTH_20 |
+            (r->code & 0xf) | ((r->nss - 1) << IWX_RATE_MCS_NSS_POS);
     uint32_t flags = IWX_TX_FLAGS_CMD_RATE | IWX_TX_FLAGS_ENCRYPT_DIS;
     uint16_t offload_assist = itlTxOffloadHeader(hdrlen);
     uint16_t cmd_size;
@@ -12472,6 +12700,29 @@ iwx_rx_pkt(struct iwx_softc *sc, struct iwx_rx_data *data, struct mbuf_list *ml)
             case IWX_STATISTICS_NOTIFICATION: {
                 struct iwx_notif_statistics *stats;
                 struct iwx_notif_statistics_v11 *stats_v11;
+                uint8_t stats_ver = iwx_lookup_notif_ver(sc, IWX_LEGACY_GROUP, IWX_STATISTICS_NOTIFICATION);
+                if (stats_ver != IWX_FW_CMD_VER_UNKNOWN && stats_ver >= 14) {
+                    // TLV layout (Linux iwl_mvm_handle_rx_statistics_tlv): no silence RSSI,
+                    // must not be read as the legacy struct.
+                    struct iwx_statistics_operational_ntfy *op;
+                    struct iwx_node *in = (struct iwx_node *)sc->sc_ic.ic_bss;
+                    if (stats_ver == 15 && iwx_rx_packet_payload_len(pkt) >= sizeof(*op)) {
+                        SYNC_RESP_STRUCT(op, pkt, struct iwx_statistics_operational_ntfy *);
+                        if ((op->hdr.type & IWX_STATISTICS_TYPE_MSK) == IWX_FW_STATISTICS_OPERATIONAL &&
+                            op->hdr.version == 15) {
+                            uint16_t phy = (in && in->in_phyctxt) ? in->in_phyctxt->id : 0;
+                            if (phy < IWX_STATS_MAX_PHY_OPERATIONAL) {
+                                uint32_t load = le32toh(op->per_phy_stats[phy].channel_load);
+                                if (sc->sc_stats_ntfy++ < 4)
+                                    XYLog("statistics v15: phy %u channel_load %u by_us %u not_by_us %u\n", phy, load,
+                                          le32toh(op->per_phy_stats[phy].channel_load_by_us),
+                                          le32toh(op->per_phy_stats[phy].channel_load_not_by_us));
+                                sc->sc_chan_load = load <= 100 ? (int)load : -1;
+                            }
+                        }
+                    }
+                    break;
+                }
                 if (isset(sc->sc_ucode_api, IWX_UCODE_TLV_API_NEW_RX_STATS)) {
                     SYNC_RESP_STRUCT(stats, pkt, struct iwx_notif_statistics *);
                     sc->sc_noise = iwx_get_noise((uint8_t *)&stats->rx.general.beacon_silence_rssi_a);
@@ -14426,6 +14677,7 @@ iwx_attach(struct iwx_softc *sc, struct pci_attach_args *pa)
     struct _ifnet *ifp = &ic->ic_if;
     int err;
     int txq_i, i, j;
+    sc->sc_chan_load = -1;
     
     sc->sc_pct = pa->pa_pc;
     sc->sc_pcitag = pa->pa_tag;

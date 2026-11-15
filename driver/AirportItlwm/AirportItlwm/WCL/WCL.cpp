@@ -1,3 +1,5 @@
+// Modified by the ax210-airdrop-awdl-hackintosh project, 2026-11 (AWDL/AirDrop on macOS 15
+// Sequoia and 26 Tahoe, and related fixes). See CHANGES-FROM-UPSTREAM.md. License: GPL-2.0.
 //
 //  WCL.cpp
 //  AirportItlwm
@@ -733,6 +735,10 @@ void AirportItlwmSkywalkInterface::handleWCLEvent(int code, void *data)
                     AirportWCL::LqmBeaconUpdate update;
                     if (AirportWCL::makeBeaconUpdate(
                             wclLqmBeacons - wclLqmReportedBeacons, update)) {
+                        apple80211_rssi_data rssi = {};
+                        if (getRSSI(&rssi) == kIOReturnSuccess)
+                            AirportWCL::setLqmRssi(update, rssi.aggregate_rssi);
+                        AirportWCL::setLqmCca(update, fHalService->getDriverInfo()->getChannelLoad());
                         instance->postMessage(this, AirportWCL::LqmUpdate,
                             &update, sizeof(update), true);
                         wclLqmReportedBeacons = wclLqmBeacons;

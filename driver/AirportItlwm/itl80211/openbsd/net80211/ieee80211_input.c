@@ -497,7 +497,16 @@ ieee80211_inputm(struct _ifnet *ifp, mbuf_t m, struct ieee80211_node *ni,
         *orxseq = nrxseq;
     }
     if (ic->ic_state > IEEE80211_S_SCAN) {
-        ni->ni_rssi = rxi->rxi_rssi;
+        /*
+         * As a station every received frame is accounted to ic_bss. With the AWDL
+         * filter open (action and data frames of AWDL peers, on and off channel) the
+         * AP's signal level was overwritten by whoever was heard last: RSSI flapping
+         * between -59 and -83 dBm and one bar in the menu (2026-11-13). Take the level
+         * only from frames the node itself transmitted.
+         */
+        if (type != IEEE80211_FC0_TYPE_CTL &&
+            IEEE80211_ADDR_EQ(wh->i_addr2, ni->ni_macaddr))
+            ni->ni_rssi = rxi->rxi_rssi;
         ni->ni_rstamp = rxi->rxi_tstamp;
         ni->ni_inact = 0;
         

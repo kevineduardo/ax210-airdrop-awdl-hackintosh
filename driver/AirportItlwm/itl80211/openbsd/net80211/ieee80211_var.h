@@ -507,6 +507,17 @@ struct ieee80211com {
     int             (*ic_awdl_tx)(struct ieee80211com *, uint8_t chan,
                         const uint8_t *frame, size_t len);
     uint32_t        ic_awdl_tx_sent;     /* queued to the firmware */
+    uint32_t        ic_awdl_tx_rate_idx; /* unicast data rate: step of the HAL's rate ladder */
+    uint32_t        ic_awdl_tx_rate_up, ic_awdl_tx_rate_down;
+    uint32_t        ic_awdl_tx_rate_mbps; /* nominal rate of that step */
+    /* Capabilities of the cached AWDL data peer (setPEER_CACHE_CONTROL), for the ladder. */
+    uint8_t         ic_awdl_peer_mac[IEEE80211_ADDR_LEN];
+    uint8_t         ic_awdl_peer_caps;
+#define IEEE80211_AWDL_PEER_HT      0x01    /* HT, one stream */
+#define IEEE80211_AWDL_PEER_HT2     0x02    /* HT MCS 8-15 */
+#define IEEE80211_AWDL_PEER_VHT     0x04
+#define IEEE80211_AWDL_PEER_VHT2    0x08    /* VHT two streams */
+#define IEEE80211_AWDL_PEER_VHT_M8  0x10    /* VHT MCS 8 */
     uint32_t        ic_awdl_tx_busy;     /* refused: not dwelling on chan */
     uint32_t        ic_awdl_tx_err;      /* refused: ring full, no mbuf, DMA */
     uint32_t        ic_awdl_tx_ok;       /* TX_CMD response success */

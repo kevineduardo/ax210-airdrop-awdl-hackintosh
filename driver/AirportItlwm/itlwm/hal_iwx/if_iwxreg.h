@@ -1,3 +1,5 @@
+// Modified by the ax210-airdrop-awdl-hackintosh project, 2026-11 (AWDL/AirDrop on macOS 15
+// Sequoia and 26 Tahoe, and related fixes). See CHANGES-FROM-UPSTREAM.md. License: GPL-2.0.
 /*
 * Copyright (C) 2020  钟先耀
 *
@@ -4418,6 +4420,82 @@ struct iwx_statistics_load {
     uint32_t pkt_count[IWX_MAC_INDEX_AUX];
     uint8_t avg_energy[IWX_STATION_COUNT];
 } __packed; /* STATISTICS_RX_MAC_STATION_S_VER_4 */
+
+/*
+ * Operational statistics, STATISTICS_NOTIFICATION version 15 (Linux iwlwifi fw/api/stats.h,
+ * struct iwl_statistics_operational_ntfy). From this version the reply to STATISTICS_CMD is
+ * empty and the data comes in the notification. There is no beacon-silence RSSI (noise) here.
+ */
+#define IWX_STATISTICS_TYPE_MSK        0x7f
+#define IWX_FW_STATISTICS_OPERATIONAL  0
+#define IWX_STATS_MAX_BW_INDEX         5
+#define IWX_STATS_MAX_PHY_OPERATIONAL  3
+
+struct iwx_statistics_ntfy_hdr {
+    uint8_t type;
+    uint8_t version;
+    uint16_t size;
+} __packed; /* STATISTICS_NTFY_HDR_API_S_VER_1 */
+
+struct iwx_statistics_ntfy_per_mac {
+    uint32_t beacon_filter_average_energy;
+    uint32_t air_time;
+    uint32_t beacon_counter;
+    uint32_t beacon_average_energy;
+    uint32_t beacon_rssi_a;
+    uint32_t beacon_rssi_b;
+    uint32_t rx_bytes;
+} __packed; /* STATISTICS_NTFY_PER_MAC_API_S_VER_1 */
+
+struct iwx_statistics_ntfy_per_phy {
+    uint32_t channel_load;
+    uint32_t channel_load_by_us;
+    uint32_t channel_load_not_by_us;
+    uint32_t clt;
+    uint32_t act;
+    uint32_t elp;
+    uint32_t rx_detected_per_ch_width[IWX_STATS_MAX_BW_INDEX];
+    uint32_t success_per_ch_width[IWX_STATS_MAX_BW_INDEX];
+    uint32_t fail_per_ch_width[IWX_STATS_MAX_BW_INDEX];
+    uint32_t last_tx_ch_width_indx;
+} __packed; /* STATISTICS_NTFY_PER_PHY_API_S_VER_1 */
+
+struct iwx_statistics_ntfy_per_sta {
+    uint32_t average_energy;
+} __packed; /* STATISTICS_NTFY_PER_STA_API_S_VER_1 */
+
+struct iwx_statistics_operational_ntfy {
+    struct iwx_statistics_ntfy_hdr hdr;
+    uint32_t flags;
+    struct iwx_statistics_ntfy_per_mac per_mac_stats[IWX_MAC_INDEX_AUX];
+    struct iwx_statistics_ntfy_per_phy per_phy_stats[IWX_STATS_MAX_PHY_OPERATIONAL];
+    struct iwx_statistics_ntfy_per_sta per_sta_stats[IWX_STATION_COUNT];
+    uint64_t rx_time;
+    uint64_t tx_time;
+    uint64_t on_time_rf;
+    uint64_t on_time_scan;
+} __packed; /* STATISTICS_OPERATIONAL_NTFY_API_S_VER_15 */
+
+struct iwx_statistics_operational_ntfy_ver_14 {
+    struct iwx_statistics_ntfy_hdr hdr;
+    uint32_t flags;
+    uint32_t mac_id;
+    uint32_t beacon_filter_average_energy;
+    uint32_t beacon_filter_reason;
+    uint32_t radio_temperature;
+    uint32_t air_time[IWX_MAC_INDEX_AUX];
+    uint32_t beacon_counter[IWX_MAC_INDEX_AUX];
+    uint32_t beacon_average_energy[IWX_MAC_INDEX_AUX];
+    uint32_t beacon_rssi_a;
+    uint32_t beacon_rssi_b;
+    uint32_t rx_bytes[IWX_MAC_INDEX_AUX];
+    uint64_t rx_time;
+    uint64_t tx_time;
+    uint64_t on_time_rf;
+    uint64_t on_time_scan;
+    uint32_t average_energy[IWX_STATION_COUNT];
+    uint32_t reserved;
+} __packed; /* STATISTICS_OPERATIONAL_NTFY_API_S_VER_14 */
 
 struct iwx_statistics_load_v1 {
     uint32_t air_time[IWX_MAC_INDEX_AUX];

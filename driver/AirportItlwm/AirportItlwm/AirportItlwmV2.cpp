@@ -116,10 +116,57 @@ eventHandler(struct ieee80211com *ic, int msgCode, void *data)
 #endif
 }
 
+// IO80211InfraInterface::setInterfaceCCA(channel, percent): hands the channel load to the
+// interface monitor (IO80211InterfaceMonitor::setInterfaceAverageCCA). Null-safe in the family.
+extern "C" void _ZN21IO80211InfraInterface15setInterfaceCCAE18apple80211_channeli(
+    IO80211SkywalkInterface *, struct apple80211_channel, int);
+
+// Runs under the command gate: firmware commands and the net80211 state are serialised by it,
+// while the watchdog has its own work loop.
+IOReturn AirportItlwm::statisticsTickGated(OSObject *owner, void *, void *, void *, void *)
+{
+    AirportItlwm *self = static_cast<AirportItlwm *>(owner);
+    struct ieee80211com *ic = self->fHalService->get80211Controller();
+    if (ic->ic_state != IEEE80211_S_RUN || !ic->ic_bss || !ic->ic_bss->ni_chan ||
+        ic->ic_bss->ni_chan == IEEE80211_CHAN_ANYC)
+        return kIOReturnSuccess;
+    int load = self->fHalService->getDriverInfo()->getChannelLoad();
+    if (load >= 0 && self->fNetIf) {
+        struct apple80211_channel ch = {};
+        ch.version = APPLE80211_VERSION;
+        ch.channel = ieee80211_chan2ieee(ic, ic->ic_bss->ni_chan);
+        ch.flags = IEEE80211_IS_CHAN_2GHZ(ic->ic_bss->ni_chan) ? APPLE80211_C_FLAG_2GHZ : APPLE80211_C_FLAG_5GHZ;
+        _ZN21IO80211InfraInterface15setInterfaceCCAE18apple80211_channeli(self->fNetIf, ch, load);
+    }
+    self->fHalService->getDriverInfo()->requestStatistics();
+    char info[200];
+    self->fHalService->getDriverInfo()->getStatisticsInfo(info, sizeof(info));
+    self->setProperty("ItlFwStats", info);
+    return kIOReturnSuccess;
+}
+
 void AirportItlwm::watchdogAction(IOTimerEventSource *timer)
 {
-    struct _ifnet *ifp = &fHalService->get80211Controller()->ic_ac.ac_if;
+    struct ieee80211com *ic = fHalService->get80211Controller();
+    struct _ifnet *ifp = &ic->ic_ac.ac_if;
     (*ifp->if_watchdog)(ifp);
+
+#ifdef AIRPORT_WCL
+    // Every 5 s: refresh the firmware statistics and report the channel load, as a native
+    // driver does from its periodic chip statistics. attemptAction never blocks, so a stop()
+    // that holds the gate while it removes this timer cannot deadlock against us; a busy
+    // gate only skips one sample.
+    // Off unless -itlfwstats is given: the firmware command it sends every 5 s (statistics
+    // v14 with a reply) has not been boot-tested yet.
+    static uint32_t tick;
+    static int fwStats = -1;
+    if (fwStats < 0) {
+        int v;
+        fwStats = PE_parse_boot_argn("-itlfwstats", &v, sizeof(v)) ? 1 : 0;
+    }
+    if (fwStats && ++tick % 5 == 0 && _fCommandGate)
+        _fCommandGate->attemptAction(statisticsTickGated);
+#endif
 
     watchdogTimer->setTimeoutMS(kWatchDogTimerPeriod);
 }
@@ -615,9 +662,25 @@ bool AirportItlwm::configureInterface(IONetworkInterface *netif)
     }
 #if defined(AIRPORT_AWDL)
     // awdl0 must not take over the station's net80211 ifnet or statistics.
-    if (AirportItlwmAWDLEthernetInterface *awdl = OSDynamicCast(AirportItlwmAWDLEthernetInterface, netif))
+    if (AirportItlwmAWDLEthernetInterface *awdl = OSDynamicCast(AirportItlwmAWDLEthernetInterface, netif)) {
+        // Output model. With a registered output handler (push) awdl0 had no interface send
+        // queue: packets came straight from the stack. Apple's QUIC (AirDrop) paces through
+        // that queue: it stamps each packet with a launch time and counts it as sent then.
+        // Sent at once instead, acknowledgements arrived "before" their packets
+        // (quic_time_delta start time is after end time, thousands per transfer, 2026-11-13),
+        // the RTT estimate went to seconds (smoothed 5555 ms) and uploads stalled.
+        // Pull model, as on en0: the stack queues and paces, the driver takes packets in
+        // outputStart() when it has room. -itlawdlpush keeps the old model.
+        int v;
+        if (!PE_parse_boot_argn("-itlawdlpush", &v, sizeof(v)) &&
+            awdl->configureOutputPullModel(64, kIONetworkWorkLoopSynchronous, 0,
+                IOEthernetInterface::kOutputPacketSchedulingModelNormal, 0) == kIOReturnSuccess) {
+            awdl->fPullModel = true;
+            return true;
+        }
         return awdl->registerOutputHandler(awdl,
                                            (IOOutputAction)&AirportItlwmAWDLEthernetInterface::outputAWDL);
+    }
 #endif
 
     nd = netif->getParameter(kIONetworkStatsKey);
@@ -759,6 +822,22 @@ setLinkStateGated(OSObject *target, void *arg0, void *arg1, void *arg2, void *ar
 #ifdef __PRIVATE_SPI__
 IOReturn AirportItlwm::outputStart(IONetworkInterface *interface, IOOptionBits options)
 {
+#if defined(AIRPORT_AWDL)
+    // awdl0 in the pull model: runs on the work loop (kIONetworkWorkLoopSynchronous).
+    if (fAWDLBsdIf && interface == fAWDLBsdIf) {
+        if (!fAWDLIf)
+            return kIOReturnNoResources;
+        while (fAWDLIf->dataQueueHasRoom()) {
+            mbuf_t pkt = NULL;
+            if (interface->dequeueOutputPackets(1, &pkt) != kIOReturnSuccess || !pkt)
+                return kIOReturnSuccess;        // nothing (due) in the stack's queue
+            fAWDLIf->enqueueData(pkt);
+        }
+        // Our queue is full: the stack keeps the rest and waits for signalOutputThread().
+        fAWDLIf->noteOutputStalled();
+        return kIOReturnNoResources;
+    }
+#endif
     struct _ifnet *ifp = &fHalService->get80211Controller()->ic_ac.ac_if;
     mbuf_t m = NULL;
 #ifdef AIRPORT_WCL
@@ -829,14 +908,33 @@ IOReturn AirportItlwm::outputPacketGated(OSObject *owner, void *arg0, void *, vo
     return status;
 }
 
+// IO80211SkywalkInterface::recordOutputPacket(apple80211_wme_ac, packets, bytes). Feeds the
+// per-access-category IOReporter channels of the interface monitor (IfTxPk*/IfTxBy*), which
+// IO80211AWDLPeerManager::gatherInfraStats() samples to classify infra traffic (Idle / Real
+// Time / Streaming / Bulk Data) and decide the AWDL schedule (Infra Priority). Null-safe in
+// the family; called by symbol so it does not depend on the vtable slot.
+extern "C" IOReturn _ZN23IO80211SkywalkInterface18recordOutputPacketE17apple80211_wme_acii(
+    IO80211SkywalkInterface *, int ac, int packets, int bytes);
+
 UInt32 AirportItlwm::enqueuePacket(mbuf_t m)
 {
     auto ic = fHalService->get80211Controller();
     auto ifp = &ic->ic_ac.ac_if;
     if (ic->ic_state == IEEE80211_S_RUN && ifp->if_snd.queue &&
-        m && mbuf_type(m) != MBUF_TYPE_FREE && (mbuf_flags(m) & MBUF_PKTHDR) &&
-        ifp->if_snd.queue->lockEnqueue(m))
-        return kIOReturnOutputSuccess;
+        m && mbuf_type(m) != MBUF_TYPE_FREE && (mbuf_flags(m) & MBUF_PKTHDR)) {
+        // The class the stack gave the packet (SO_TRAFFIC_CLASS and friends), as a native
+        // driver reports it: MBUF_TC_BE/BK/VI/VO have the values of APPLE80211_WME_AC_*.
+        // Not the DSCP field: on 2026-11-13 ordinary traffic carrying a high DSCP was counted
+        // as voice, the family saw infra as "Real Time" and kept AWDL in Infra Priority
+        // (3 slots in 16) during an AirDrop: ~60 KB/s.
+        const int ac = (int)mbuf_get_traffic_class(m);
+        const int bytes = (int)mbuf_pkthdr_len(m);
+        if (ifp->if_snd.queue->lockEnqueue(m)) {
+            if (fNetIf)
+                _ZN23IO80211SkywalkInterface18recordOutputPacketE17apple80211_wme_acii(fNetIf, ac & 3, 1, bytes);
+            return kIOReturnOutputSuccess;
+        }
+    }
     if (ifp->netStat)
         ++ifp->netStat->outputErrors;
     if (m && mbuf_type(m) != MBUF_TYPE_FREE)

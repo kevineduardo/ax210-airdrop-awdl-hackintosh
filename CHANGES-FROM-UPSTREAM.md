@@ -28,7 +28,21 @@ Changes (November 2026):
 | Security | `AirportItlwmAWDLInterface.cpp` | Run-time AWDL switches (`setProperties`) require an administrator |
 | Identification | `AirportItlwm/WCL/Info.plist`, `WCL/Sequoia-Info.plist` | `CFBundleGetInfoString` names this fork. CI sets `GIT_COMMIT=-awdl-<commit>`, so the driver reports `itlwm: 2.4.0-awdl-<commit>`. Bundle identifier, class names and kext file name are unchanged on purpose, so the kext stays a drop-in replacement and cannot load next to another AirportItlwm |
 
-Engineering notes for each change are in [docs/research/](docs/research/).
+Further changes made while testing on macOS 26.7.2 Tahoe (25G332), 12–14 November 2026:
+
+| Area | Files | Change |
+|---|---|---|
+| `awdl0` like a real Mac | `AirportItlwmAWDLInterface.cpp`, `AirportItlwmEthernetInterface.cpp`, `WCL/WCL.{hpp,cpp}` | `awdl0` is a hidden interface (not a network service) and the driver brings it up itself (`-itlawdlnoup` to disable); MTU stays 1500 |
+| AWDL RX | `AirportItlwmAWDLInterface.cpp`, `ieee80211_input.c` | 802.11 headers with HT Control / addr4 accepted (19 % of frames were rejected), Null frames handled apart, hardware-deaggregated A-MSDU subframes accepted; counters for rejected frames |
+| AWDL TX | `AirportItlwmAWDLInterface.{hpp,cpp}`, `hal_iwx/ItlIwx.cpp` | TX gated by the peer's availability window (`-itlawdlnoawgate`); per-peer timeline and per-destination TX gate; RSSI trust "bubble" (`itlawdltrustrssi=`); the sync master always sends the PSF, even in AF TX mode 3; adaptive rate ladder for unicast data from the peer's HT/VHT capabilities (`-itlawdlfixedrate`, `-itlawdllegacyrate`) |
+| Family integration | `AirportItlwmAWDLInterface.cpp`, `AirportItlwmSkywalkInterface.{hpp,cpp}`, `AirportItlwmV2.{hpp,cpp}`, `include/HAL/ItlDriverInfo.hpp` | Data statistics reported to the peer manager so it leaves Low Power (`-itlawdlnostats`); `awdl0` marked enabled and the unicast data peer cached with `cachePeer` (`-itlawdlnoifenable`, `-itlawdlnopeercache`); group frames, tracked peer and follow use the family's cached peers; answers to `MAX_NSS_FOR_AP`, AWDL master channels, election parameters, VHT capability, optional HE capability (`-itlhecap`) |
+| Output model | `AirportItlwmV2.cpp`, `AirportItlwmAWDLInterface.cpp` | Pull output model for `awdl0` with its own output thread, so the stack paces Apple's QUIC (`-itlawdlpush` for the old model) |
+| Listen dwells | `AirportItlwmAWDLInterface.cpp` | Default longest dwell 420 TU; optional short dwells while AWDL idles (`-itlawdlidledwell`) |
+| Infra statistics | `AirportItlwmV2.cpp`, `AirportItlwmSkywalkInterface.cpp`, `hal_iwx/*` | Infra packet counters by traffic class and channel load fed to IO80211Family; LQM snapshot with RSSI and CCA; firmware statistics v14 behind `-itlfwstats` |
+| Release logging | `hal_iwx/ItlIwx.cpp` | `iwx_debug` 0 in Release builds |
+| BlueToolFixup | `BrcmPatchRAM/BlueToolFixup.cpp` | Patch table for 26.7.2 (25G332, UUID-gated); `bluetoothd` recognised by vnode identity (path lookup only as a fallback); late start: if Lilu's route arrives after `bluetoothd` started, restart it with its pages evicted so the patches apply; statistics line 30 s after start |
+
+Engineering notes for each change are in [docs/research/](docs/research/) and [docs/test-results-tahoe.md](docs/test-results-tahoe.md).
 
 ## driver/BlueToolFixup
 
@@ -37,7 +51,7 @@ Engineering notes for each change are in [docs/research/](docs/research/).
 Changes (November 2026), all in `BrcmPatchRAM/BlueToolFixup.cpp` and `Changelog.md`:
 
 - `-btlfxadvsets` patch table for macOS 15.8.1 (24H32): six patterns (two exact, four masked) verified to match exactly once in that build's `bluetoothd`.
-- Tables per macOS build (`kAdvSetsTables`), selected by kernel version; the 15.8.1 table is applied all-or-nothing, only when the `bluetoothd` `LC_UUID` matches, decided on the Mach-O header page before any code page is patched.
+- Tables per macOS build (`kAdvSetsTables`), including 26.7.2 (25G332, added later), selected by kernel version; the 15.8.1 table is applied all-or-nothing, only when the `bluetoothd` `LC_UUID` matches, decided on the Mach-O header page before any code page is patched.
 - `-btlfxadvsetsany` to apply patterns without the UUID check (testing only).
 - The Tahoe 26.4.1 patterns are byte-for-byte unchanged and applied as before.
 - Comment documenting a double match of the upstream `a2dpcheck` pattern on 15.8.1 (no behaviour change).

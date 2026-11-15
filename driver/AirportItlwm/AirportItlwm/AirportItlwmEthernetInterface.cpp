@@ -1,3 +1,5 @@
+// Modified by the ax210-airdrop-awdl-hackintosh project, 2026-11 (AWDL/AirDrop on macOS 15
+// Sequoia and 26 Tahoe, and related fixes). See CHANGES-FROM-UPSTREAM.md. License: GPL-2.0.
 //
 //  AirportItlwmEthernetInterface.cpp
 //  AirportItlwm-Sonoma
@@ -168,6 +170,11 @@ static mbuf_t normalizeInputPacket(mbuf_t packet, UInt32 length)
 }
 #endif
 
+#ifdef AIRPORT_WCL
+// IO80211SkywalkInterface::recordInputPacket(packets, bytes); non-virtual in the family.
+extern "C" IOReturn _ZN23IO80211SkywalkInterface17recordInputPacketEii(IO80211SkywalkInterface *, int, int);
+#endif
+
 UInt32 AirportItlwmEthernetInterface::
 inputPacket(mbuf_t packet, UInt32 length, IOOptionBits options, void *param)
 {
@@ -189,6 +196,9 @@ inputPacket(mbuf_t packet, UInt32 length, IOOptionBits options, void *param)
     }
     if (directInput)
         param = packet;
+    else if (interface)
+        // Infra RX counters (IfRxPkts/IfRxByts) for the interface monitor; see enqueuePacket.
+        _ZN23IO80211SkywalkInterface17recordInputPacketEii(interface, 1, (int)mbuf_pkthdr_len(packet));
 #endif
 #ifndef AIRPORT_WCL
     ether_header_t *eh;

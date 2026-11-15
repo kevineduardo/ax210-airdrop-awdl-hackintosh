@@ -36,6 +36,12 @@ int main(void)
     CHECK(parse(&c, 2, "dwellx", "201") == 2);
     CHECK(parse(&c, 2, "pumpus", "250") == 0 && !strcmp(c.key, "AWDLPumpUs"));
     CHECK(parse(&c, 2, "pumpus", "-1") == 2);
+    CHECK(parse(&c, 2, "awgate", "off") == 0 && !strcmp(c.key, "AWDLAwGateOn") && c.value == 0);
+    CHECK(parse(&c, 2, "idledwell", "on") == 0 && !strcmp(c.key, "AWDLIdleDwellOn"));
+    CHECK(parse(&c, 2, "datastats", "on") == 0 && !strcmp(c.key, "AWDLDataStatsOn"));
+    CHECK(parse(&c, 2, "dwell", "420") == 0 && !strcmp(c.key, "AWDLListenDwellTU") && c.value == 420);
+    CHECK(parse(&c, 2, "dwell", "15") == 2);
+    CHECK(parse(&c, 2, "dwell", "1001") == 2);
     CHECK(parse(&c, 2, "bogus", "1") == 2);
     CHECK(parse(&c, 1, "pump") == 2);
     if (failures) return 1;

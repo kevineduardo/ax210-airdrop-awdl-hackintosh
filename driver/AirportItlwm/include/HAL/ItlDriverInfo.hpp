@@ -1,3 +1,5 @@
+// Modified by the ax210-airdrop-awdl-hackintosh project, 2026-11 (AWDL/AirDrop on macOS 15
+// Sequoia and 26 Tahoe, and related fixes). See CHANGES-FROM-UPSTREAM.md. License: GPL-2.0.
 /*
 * Copyright (C) 2020  钟先耀
 *
@@ -22,6 +24,13 @@ public:
     virtual const char *getFirmwareVersion() = 0;
     
     virtual int16_t getBSSNoise() = 0;
+
+    // Channel load (CCA busy, percent) from the firmware statistics, -1 when unknown.
+    virtual int getChannelLoad() { return -1; }
+    // Ask the firmware for a fresh statistics report (asynchronous, no-op when unsupported).
+    virtual void requestStatistics() {}
+    // Diagnostics for the two calls above: samples, requests, last error, last deltas.
+    virtual void getStatisticsInfo(char *buf, size_t len) { if (len) buf[0] = 0; }
     
     virtual bool is5GBandSupport() = 0;
     

@@ -89,9 +89,17 @@ public:
     int inputAWDLData(mbuf_t m, class AirportItlwmAWDLInterface *awdl);
     // Stage 4 output: hand Ethernet frames to the AWDL interface's tx queue.
     UInt32 outputAWDL(mbuf_t m, void *param);
+    bool fPullModel = false;        // send queue kept by the stack (configureOutputPullModel)
     void setAWDLOwner(class AirportItlwmAWDLInterface *owner) { fOwner = owner; }
 
+    void free() override;
+
 private:
+    // On a real Mac the IO80211 family brings awdl0 up itself. Ours is hidden from
+    // SystemConfiguration (HiddenInterface), so nothing in user space would send the
+    // SIOCSIFFLAGS that starts the AWDL link; the driver does it once after attach.
+    static void bringUpCall(thread_call_param_t self, thread_call_param_t);
+    thread_call_t fBringUp;
     class AirportItlwmAWDLInterface *fOwner;
     uint64_t fDropped;
     ether_addr fMac;
@@ -227,7 +235,7 @@ private:
     uint32_t fListenEveryNth;       // AWDLListenEveryNth: 1 = every eligible slot
     // Peer timeline, so a listen can start when the peer is on the channel.
     static void listenTimerFired(OSObject *owner, IOTimerEventSource *sender);
-    void trackPeer(const uint8_t *af, size_t len, const uint8_t *src, uint64_t rxUs, unsigned rxChan);
+    void trackPeer(const uint8_t *af, size_t len, const uint8_t *src, uint64_t rxUs, unsigned rxChan, int rssiDbm);
     bool parsePeerChanSeq(const uint8_t *v, size_t len);
     unsigned peerChannelAt(uint64_t us) const;
     void scheduleAlignedListen(uint64_t afterUs);
@@ -295,6 +303,37 @@ private:
     // PSF / MI / queued data whenever the dwell actually runs and the peer is there.
     void pumpTick();
     bool pumpCanSend(uint8_t *dwellChan, int *dwellState);
+    // Timeline of every AWDL peer we hear (not only the tracked one): the TX gate is
+    // decided per destination. With a single tracked peer, a second Apple device nearby
+    // made the other one unreachable (2026-11-14: ping6 to the iPhone 100 % lost while
+    // the MacBook was the tracked peer, 0 % once the iPhone was).
+    struct PeerTl {
+        bool used, chanValid;
+        bool cached;                // in the family's peer cache (setPEER_CACHE_CONTROL add)
+        int8_t rssi;                // dBm, smoothed, of its action frames
+        ether_addr master;          // master it announces in its sync parameters
+        uint32_t aligned, misaligned;   // its slot boundaries vs ours (kFollowTolUs)
+        ether_addr mac;
+        uint64_t seenUs;            // last action frame with sync parameters
+        uint64_t dataRxUs;          // last unicast data frame from it
+        int64_t refUs;
+        uint16_t refSeq, pm;
+        uint32_t slotUs;
+        uint8_t chan[16];
+    };
+    static const unsigned kPeerTlMax = 16;
+    PeerTl fPeerTl[kPeerTlMax];
+    uint64_t fTxPsfMasterMode3;     // PSFs sent in AF TX mode 3 because we are the sync master
+    uint64_t fPeerTlEvict, fGateSkips, fGateUnknownDst, fGateDstAway, fGateDstAw;
+    uint64_t fGateMcCached, fGateMcTracked, fPeerSwitchCached, fFollowUntrusted;
+    bool peerTrusted(const uint8_t *mac, uint64_t now);
+    PeerTl *peerTlFind(const uint8_t *mac, bool create, uint64_t now);
+    void peerTlLearn(const uint8_t *af, size_t len, const uint8_t *src, uint64_t rxUs, int rssiDbm);
+    bool entryTrusted(const PeerTl &e, uint64_t now) const;
+    int fTrustRssi;                 // dBm; itlawdltrustrssi=<magnitude>, default -60
+    bool dwellRunning();
+    bool destGateOpen(const uint8_t *dst, uint64_t now);
+    void publishPeerTl();
     void noteRocStart();
     int64_t listenLeadUs() const { return fListenLeadUs; }
     uint32_t dwellExtraTU() const { return fDwellExtraTU; }
@@ -328,6 +367,14 @@ private:
     uint64_t fPeerSwitchData;       // tracked peer replaced by the peer we exchange data with
     ether_addr fDataPeerMac;        // last unicast data peer (either direction)
     uint64_t fDataPeerUs;
+    ether_addr fCachedPeerMac;      // last peer handed to cachePeer()
+    uint64_t fCachedPeerUs, fPeerCacheReq, fPeerCacheDataOn, fPeerCacheIfEnabled;
+    enum { kPeerCacheDoneMax = 16 };
+    struct PeerCacheDone { uint32_t type; uint8_t mac[6]; uint16_t tail; };
+    PeerCacheDone fPeerCacheDone[kPeerCacheDoneMax];   // setPEER_CACHE_CONTROL operations to report done
+    unsigned fPeerCacheDoneHead, fPeerCacheDoneCount;
+    uint64_t fPeerCacheCompleted;
+    uint64_t fPeerActivityStamps;
     unsigned peerGateChannel(uint64_t us);
     // Group-addressed vs unicast data (mDNS / ND vs TCP): separate counters.
     uint8_t fDataQMc[256];          // fDataQ[i] is group-addressed
@@ -345,6 +392,31 @@ public:
     uint64_t fDataRx;
     uint64_t fDataRxBad;
     uint64_t fDataRxAmsdu;
+    uint64_t fDataRxNull, fDataRxHtc, fDataRxFrag, fDataRxAmsduSub;
+    // AW gate: hold frames for an idle peer until its next availability window.
+    bool fAwGate;
+    uint64_t fAwGateHeld, fAwGateSent;
+    uint64_t fDataRxUcUs;                   // last unicast data frame received
+    bool awGateOpen(uint64_t now);
+    // Idle dwells: AW-only listen when there is no unicast traffic.
+    bool fIdleDwell;
+    uint64_t fDataTxUcUs;                   // last unicast data frame queued
+    uint64_t fListenIdle, fListenFull;
+    int64_t fListenNextLeadUs;
+    bool dwellIdle(uint64_t now) const;
+    int64_t listenLeadUs(uint64_t now) const;
+    uint32_t dwellTUFor(uint64_t now, unsigned run, int64_t slot, uint16_t pm);
+    // Data-path counts reported to the peer manager (updateInterfaceDataStats).
+    bool fDataStats;
+    uint64_t fStatsTx, fStatsRx, fStatsReports;
+    IOReturn fStatsLastRet;
+    void reportDataStats();
+    void cacheDataPeer();
+    void completePeerCacheOps();
+    void stampDataPeerActivity();
+    uint32_t fDataRxBadLen;
+    uint8_t fDataRxBadHeadLen;
+    uint8_t fDataRxBadHead[64];
     uint64_t fDataRxNoBuf;
     uint64_t fDataRxMc;             // group-addressed frames delivered to awdl0
     uint32_t fDataRxLastLen;
@@ -352,9 +424,20 @@ public:
     void publishDataState();
     // Ethernet frames from awdl0, sent as AWDL data frames during a dwell.
     void enqueueData(mbuf_t m);
+    // Pull model: packets are taken from the stack's queue only while fewer than
+    // kDataQueuePull wait here, so the stack's queue (pacing, AQM) stays in charge.
+    enum { kDataQueuePull = 32 };
+    bool dataQueueHasRoom() const { return fDataQCount < kDataQueuePull; }
+    void noteOutputStalled() { fOutputStalled = true; fOutputStalls++; }
+    bool fOutputStalled = false;
+    uint64_t fOutputStalls = 0, fOutputResumes = 0;
+    uint64_t fOutputStarts = 0;
+    IOReturn fOutputStartRet = 0;
     // Unicast data to/from this station: it is the peer whose timeline matters.
     void noteDataPeer(const uint8_t *mac);
+    void notePeerDataRx(const uint8_t *mac, uint64_t us);
     void flushData();
+    void resumeOutput();
     // 32 overflowed during AirDrop (AWDLDataTxDropFull): data only
     // leaves in the peer's slots, so a burst from the stack has to wait.
     enum { kDataQueueLen = 256 };
@@ -375,6 +458,9 @@ private:
     uint64_t fTxSlotUs;
     uint16_t fTxSeq;                // 802.11 sequence number
     uint32_t fMasterChannel;        // setAWDL_MASTER_CHANNEL
+    uint32_t fSecondaryMasterChannel;
+    uint8_t fElectionParams[0x38];  // last setAWDL_ELECTION_PARAMS
+    bool fElectionParamsSet;
     uint64_t fTxPSF;
     uint64_t fTxMI;
     uint64_t fTxRefused;            // driver refused (not dwelling, ring full)

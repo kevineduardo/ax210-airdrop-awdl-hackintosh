@@ -1,3 +1,5 @@
+// Modified by the ax210-airdrop-awdl-hackintosh project, 2026-11 (AWDL/AirDrop on macOS 15
+// Sequoia and 26 Tahoe, and related fixes). See CHANGES-FROM-UPSTREAM.md. License: GPL-2.0.
 /*
 * Copyright (C) 2020  钟先耀
 *
@@ -735,6 +737,18 @@ struct iwx_softc {
 	/* AWDL listen: a one-channel passive scan with its own uid. */
 	int sc_awdl_listen_active;
 	uint32_t sc_awdl_listen_count;
+	/* AWDL unicast data rate (legacy OFDM index 0..7 = 6..54 Mbps), see iwx_awdl_tx_frame */
+	uint8_t sc_awdl_rate_idx;
+	uint8_t sc_awdl_rate_init;
+	uint16_t sc_awdl_rate_clean;	/* consecutive first-try successes at this rate */
+	uint32_t sc_awdl_rate_up, sc_awdl_rate_down;
+	uint8_t sc_awdl_rate_steps;	/* length of the ladder in use */
+	uint8_t sc_awdl_rate_caps;	/* peer caps the ladder was built for */
+	uint8_t sc_awdl_rate_ceiling;	/* highest step allowed while sc_awdl_rate_hold > 0 */
+	uint8_t sc_awdl_rate_bad, sc_awdl_rate_forgive;
+	uint16_t sc_awdl_rate_since_up;	/* frames at this step since the last step up */
+	uint16_t sc_awdl_rate_hold;	/* frames left before the ceiling is lifted */
+	uint8_t sc_awdl_tx_rate[4096];	/* rate index + 1 of the frame in each ring slot, 0 = not adaptive */
 	uint32_t sc_awdl_listen_fail;
 	/* Aux ROC (HOT_SPOT_CMD) state for the AWDL listen. */
 	int sc_aux_roc_pending;		/* sent, response not seen yet */
@@ -775,6 +789,13 @@ struct iwx_softc {
 	struct iwx_phy_ctxt sc_phyctxt[IWX_NUM_PHY_CTX];
 
 	int sc_noise;
+	int sc_chan_load;	/* percent, -1 unknown (operational statistics v15) */
+	uint64_t sc_stats_rx_time, sc_stats_tx_time, sc_stats_on_time;	/* last v14 sample (usec) */
+	uint32_t sc_stats_req, sc_stats_last_rx, sc_stats_last_tx, sc_stats_last_on;
+	int sc_stats_err;	/* last request: errno, or -1 no reply, -2 short, -3 bad header */
+	uint8_t sc_stats_ver, sc_stats_hdr_type, sc_stats_hdr_ver;
+	uint32_t sc_stats_len;
+	uint32_t sc_stats_ntfy;	/* statistics notifications seen */
 
     int sc_pm_support;
 	int sc_ltr_enabled;

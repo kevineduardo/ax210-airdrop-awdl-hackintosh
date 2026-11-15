@@ -1,3 +1,5 @@
+// Modified by the ax210-airdrop-awdl-hackintosh project, 2026-11 (AWDL/AirDrop on macOS 15
+// Sequoia and 26 Tahoe, and related fixes). See CHANGES-FROM-UPSTREAM.md. License: GPL-2.0.
 //
 //  WCL.hpp
 //  AirportItlwm
@@ -101,6 +103,25 @@ inline bool makeBeaconUpdate(uint32_t receivedDelta, LqmBeaconUpdate &out)
     out.receivedDelta = receivedDelta;
     out.beaconValid = out.snapshotValid = out.countersValid = 1;
     return true;
+}
+
+// Radio measurements in the same snapshot, from WCLNetManager::handleLqmUpdate (25G332):
+//   +0x00 valid, +0x04 int32 RSSI (dBm)        -> current BSS +0x284
+//   +0x12 valid, +0x13 int8  CCA (percent)     -> current BSS +0x298/+0x299, which is what
+//                                                 WCLConfigManager::getCCA (ioctl 0x189) returns
+// (+0x0b/+0x0c and +0x0e/+0x10 are two 16-bit values, noise and SNR; not filled: the
+// firmware gives no noise measurement.)
+inline void setLqmRssi(LqmBeaconUpdate &out, int32_t rssi)
+{
+    out.prefix[0] = 1;
+    memcpy(out.prefix + 4, &rssi, sizeof(rssi));
+}
+inline void setLqmCca(LqmBeaconUpdate &out, int cca)
+{
+    if (cca < 0 || cca > 100)
+        return;
+    out.prefix[0x12] = 1;
+    out.prefix[0x13] = (uint8_t)cca;
 }
 
 struct DriverAvailability {

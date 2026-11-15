@@ -6,8 +6,8 @@
 //
 // Build:  make -C tools/awdlctl        (or: clang -O2 -framework IOKit -framework CoreFoundation -o awdlctl awdlctl.c)
 // Usage:  awdlctl show
-//         sudo awdlctl pump on|off | hometx on|off | follow on|off
-//         sudo awdlctl lead <us> | dwellx <TU> | pumpus <us>
+//         sudo awdlctl pump|hometx|follow|awgate|idledwell|datastats on|off
+//         sudo awdlctl lead <us> | dwellx <TU> | dwell <TU> | pumpus <us>
 //
 // Changing a value needs an administrator (the driver checks the caller's privilege).
 // The driver only accepts the keys while -itlawdllisten is set.
@@ -36,8 +36,12 @@ static const struct {
     { "pump",   KIND_BOOL, "AWDLTxPumpOn",     0, 1 },
     { "hometx", KIND_BOOL, "AWDLHomeTxOn",     0, 1 },
     { "follow", KIND_BOOL, "AWDLFollowPeerOn", 0, 1 },
+    { "awgate", KIND_BOOL, "AWDLAwGateOn",     0, 1 },
+    { "idledwell", KIND_BOOL, "AWDLIdleDwellOn", 0, 1 },
+    { "datastats", KIND_BOOL, "AWDLDataStatsOn", 0, 1 },
     { "lead",   KIND_NUM,  "AWDLListenLeadUs", 1000, 60000 },
     { "dwellx", KIND_NUM,  "AWDLDwellExtraTU", 0, 200 },
+    { "dwell",  KIND_NUM,  "AWDLListenDwellTU", 16, 1000 },   // longest single dwell
     { "pumpus", KIND_NUM,  "AWDLPumpUs",       250, 10000 },
 };
 
@@ -45,7 +49,8 @@ static const char *const kShowKeys[] = {
     "AWDLTxModes", "AWDLTxPump", "AWDLRocDelayHistMs", "AWDLRocStartVsSlotMs",
     "AWDLTxVsDwell", "AWDLTxOkFailByBand", "AWDLDataLatencyMs", "AWDLDataLatencyMaxMs",
     "AWDLTxFwOk", "AWDLTxFwFail", "AWDLTxFwBusy", "AWDLDataTx", "AWDLDataTxDeferred",
-    "AWDLDataTxPending", "AWDLDataMcast", "AWDLSyncMaster", "AWDLPeerSync", "AWDLChanSeq",
+    "AWDLDataTxPending", "AWDLDataMcast", "AWDLTxAwGate", "AWDLListenIdleDwell", "AWDLDataStats",
+    "AWDLDataRx", "AWDLDataRxBad", "AWDLDataRxAmsduSub", "AWDLSyncMaster", "AWDLPeerSync", "AWDLChanSeq",
     "AWDLPeerChanSeq", "AWDLListenByChan",
 };
 
@@ -53,8 +58,8 @@ static void usage(FILE *f)
 {
     fprintf(f,
         "usage: awdlctl show\n"
-        "       awdlctl pump on|off | hometx on|off | follow on|off\n"
-        "       awdlctl lead <us 1000..60000> | dwellx <TU 0..200> | pumpus <us 250..10000>\n");
+        "       awdlctl pump|hometx|follow|awgate|idledwell|datastats on|off\n"
+        "       awdlctl lead <us 1000..60000> | dwellx <TU 0..200> | dwell <TU 16..1000> | pumpus <us 250..10000>\n");
 }
 
 // Parses argv into cmd. Returns 0 on success, 2 on a usage error.

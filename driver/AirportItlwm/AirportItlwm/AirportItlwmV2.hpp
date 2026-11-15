@@ -103,6 +103,7 @@ public:
     virtual UInt32 outputPacket(mbuf_t, void * param) override;
 #ifdef AIRPORT_WCL
     UInt32 enqueuePacket(mbuf_t);
+    static IOReturn statisticsTickGated(OSObject *owner, void *, void *, void *, void *);
     static IOReturn outputPacketGated(OSObject *, void *, void *, void *, void *);
 #endif
 #ifdef __PRIVATE_SPI__

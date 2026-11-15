@@ -16,6 +16,14 @@
 #include <Headers/kern_devinfo.hpp>
 
 #include <mach-o/loader.h>
+#include <mach-o/fat.h>
+#include <sys/proc.h>
+#include <sys/vnode.h>
+#include <sys/ubc.h>
+#include <sys/signal.h>
+#include <sys/uio.h>
+#include <kern/thread_call.h>
+#include <kern/clock.h>
 
 
 #define MODULE_SHORT "btlfx"
@@ -594,8 +602,30 @@ static const AdvSetsPatch kAdvSetsPatches26[kAdvSetsPatchCount] = {
     ADVSETS_EXACT("advertising set address resend", kAdvSetAddrResendOriginal26, kAdvSetAddrResendPatched26),
 };
 
+// macOS 26.7.2 (25G332), bluetoothd LC_UUID 7EF7EF4D-9B0E-355A-BBA8-F34713B2580A.
+// Same six sites as 26.4.1. Patterns 1, 2 and 6 are byte-identical to 26.4.1; in 3-5 only
+// rel32/disp32 moved, so the masked 15.x patterns (same instructions, same chipset field +0x334
+// in 4 because its offset byte is wildcarded) are used. Each matches exactly once in the 25G332
+// x86_64 slice, inside a single 4 KiB page (checked offline; same bytes as mingww64
+// BlueToolFixup-FixA2DP-BLE@85eb3a8, which applies them without the UUID gate).
+static const AdvSetsPatch kAdvSetsPatches26G[kAdvSetsPatchCount] = {
+    ADVSETS_EXACT("BT Spec advertising sets capability", kSpecAdvSetsCapOriginal26, kSpecAdvSetsCapPatched26),
+    ADVSETS_EXACT("extended scanning capability", kExtScanCapOriginal26, kSpecAdvSetsCapPatched26),
+    ADVSETS_MASKED("LE event mask", kLeEventMaskOriginal24, kLeEventMaskMask24, kLeEventMaskPatched24, kLeEventMaskPatchMask24),
+    ADVSETS_MASKED("advertising set random address", kAdvSetAddrOriginal24, kAdvSetAddrMask24, kAdvSetAddrPatched24, kAdvSetAddrPatchMask24),
+    ADVSETS_MASKED("extended create connection", kExtCreateConnOriginal24, kExtCreateConnMask24, kExtCreateConnPatched24, kExtCreateConnPatchMask24),
+    ADVSETS_EXACT("advertising set address resend", kAdvSetAddrResendOriginal26, kAdvSetAddrResendPatched26),
+};
+
 #undef ADVSETS_EXACT
 #undef ADVSETS_MASKED
+
+// x86_64 LC_UUID of /usr/sbin/bluetoothd, macOS 26.7.2 (25G332)
+static const uint8_t kBluetoothdUuid25G332[16] =
+{
+    0x7E, 0xF7, 0xEF, 0x4D, 0x9B, 0x0E, 0x35, 0x5A,
+    0xBB, 0xA8, 0xF3, 0x47, 0x13, 0xB2, 0x58, 0x0A
+};
 
 // x86_64 LC_UUID of /usr/sbin/bluetoothd, macOS 15.8.1 (24H32)
 static const uint8_t kBluetoothdUuid24H32[16] =
@@ -609,8 +639,18 @@ static const AdvSetsTable kAdvSetsTables[] = {
     { "macOS 15.8.1 (24H32)", KernelVersion::Sequoia, 6, 6, kBluetoothdUuid24H32, kAdvSetsPatches24 },
     // Original crazyhulk table. No UUID recorded for 25E253 yet (fill it in with
     // tools/advsets/verify-advsets.pl on a 26.4.1 bluetoothd to make the gate strict there too).
+    // Darwin 25.6.x (26.6 - 26.7.x); verified on 25G332 (UUID gate, all six or none).
+    { "macOS 26.7.2 (25G332)", KernelVersion::Tahoe, 6, 6, kBluetoothdUuid25G332, kAdvSetsPatches26G },
     { "macOS 26.4.1 (25E253)", KernelVersion::Tahoe, 0, 99, nullptr, kAdvSetsPatches26 },
 };
+
+static const char kBluetoothdPath[] = "/usr/sbin/bluetoothd";
+// Identity of the bluetoothd vnode (pointer + vid, no reference kept) and page statistics.
+static vnode_t bluetoothdVnode = NULLVP;
+static uint32_t bluetoothdVid = 0;
+static uint32_t statPagesByVnode = 0, statPagesByPath = 0, statGetPathFail = 0;
+static int statGetPathLastErr = 0;
+static uint32_t statSitePending = 0;      // advsets site pages seen before the gate was decided
 
 // All-or-nothing gate.
 //
@@ -796,6 +836,7 @@ static void patchAdvSets(const void *data, const char *path) {
             auto &p = advSetsTable->patches[i];
             size_t off = 0;
             if (KernelPatcher::findPattern(p.find, p.findMask, p.size, data, PAGE_SIZE, &off)) {
+                __atomic_add_fetch(&statSitePending, 1, __ATOMIC_RELAXED);
                 uint32_t expected = AdvSetsPending;
                 if (__atomic_compare_exchange_n(&advSetsState, &expected, AdvSetsAborted, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
                     SYSLOG(MODULE_SHORT, "[advsets] %s site seen in %s before the Mach-O header was checked, applying none", p.name, path);
@@ -825,6 +866,154 @@ static void patchAdvSets(const void *data, const char *path) {
 }
 
 
+#pragma mark - Late start
+
+// Lilu activates its plugins from PE_initialize_console(kPEEnableScreen), on a thread call
+// (Lilu kern_start.cpp, Big Sur and newer). That is about 5 s into boot, at the same time as
+// launchd starts bluetoothd. cs_validate_page is only called the first time a page is mapped,
+// so every bluetoothd page that was validated before our route existed keeps Apple's bytes for
+// good: on 25G332, 3, 1 or 0 of the controller-init advsets sites were missed from one boot to
+// the next, and with them BLE advertising (the Mac showed up once on the iPhone and vanished).
+//
+// The route cannot be installed earlier from a plugin, so handle the lost race here: once the
+// route is in place, if bluetoothd already exists, drop the cached pages of its binary and
+// terminate it. launchd restarts it at once (KeepAlive) and this time every page goes through
+// patched_cs_validate_page. bluetoothd is seconds old at that point and has no client yet.
+// The UUID gate is resolved from the file here (allowed on this thread, unlike in
+// cs_validate_page), so the restart never depends on the header page being seen first.
+// -btlfxnolatefix disables it.
+
+static thread_call_t lateStartCall = nullptr;
+static thread_call_t statsCall = nullptr;
+static uint32_t lateStartTries = 0;
+
+static bool readFileAt(vnode_t vp, off_t offset, void *buf, int len) {
+    int resid = 0;
+    int err = vn_rdwr(UIO_READ, vp, static_cast<caddr_t>(buf), len, offset, UIO_SYSSPACE, 0,
+                      vfs_context_ucred(vfs_context_current()), &resid, vfs_context_proc(vfs_context_current()));
+    return err == 0 && resid == 0;
+}
+
+// Resolves the advsets UUID gate from the binary itself. Leaves the state alone when the
+// header cannot be read (the per-page logic then decides, as before).
+static void resolveAdvSetsGateFromFile(vnode_t vp) {
+    if (advSetsTable == nullptr || advSetsTable->uuid == nullptr)
+        return;
+    if (__atomic_load_n(&advSetsState, __ATOMIC_ACQUIRE) == AdvSetsUnverified)
+        return;
+    auto page = static_cast<uint8_t *>(IOMalloc(PAGE_SIZE));
+    if (page == nullptr)
+        return;
+    off_t slice = 0;
+    bool ok = readFileAt(vp, 0, page, PAGE_SIZE);
+    if (ok) {
+        auto fat = reinterpret_cast<const fat_header *>(page);
+        if (fat->magic == FAT_CIGAM) {
+            ok = false;
+            uint32_t n = OSSwapBigToHostInt32(fat->nfat_arch);
+            auto arch = reinterpret_cast<const fat_arch *>(fat + 1);
+            for (uint32_t i = 0; i < n && sizeof(*fat) + (i + 1) * sizeof(*arch) <= PAGE_SIZE; i++) {
+                if (OSSwapBigToHostInt32(static_cast<uint32_t>(arch[i].cputype)) == static_cast<uint32_t>(CPU_TYPE_X86_64)) {
+                    slice = OSSwapBigToHostInt32(arch[i].offset);
+                    ok = readFileAt(vp, slice, page, PAGE_SIZE);
+                    break;
+                }
+            }
+        }
+    }
+    uint8_t uuid[16] {};
+    bool uuidFound = false;
+    if (ok && readMachHeaderUuid(page, uuid, uuidFound) && uuidFound) {
+        bool match = memcmp(uuid, advSetsTable->uuid, sizeof(uuid)) == 0;
+        __atomic_store_n(&advSetsState, match ? AdvSetsArmed : AdvSetsRejected, __ATOMIC_RELEASE);
+        __atomic_store_n(&advSetsApplied, 0, __ATOMIC_RELEASE);
+        advSetsLoggedComplete = false;
+        SYSLOG(MODULE_SHORT, "[advsets] late start: %s UUID %s table %s (read from the file)", kBluetoothdPath,
+               match ? "matches" : "does not match", advSetsTable->name);
+    } else {
+        SYSLOG(MODULE_SHORT, "[advsets] late start: could not read the %s header, leaving the gate as is", kBluetoothdPath);
+    }
+    IOFree(page, PAGE_SIZE);
+}
+
+// Looks the binary up once and remembers its identity, and resolves the UUID gate from the file,
+// so neither depends on what the page-in path can find out.
+static bool rememberBluetoothdVnode() {
+    vnode_t vp = NULLVP;
+    if (vnode_lookup(kBluetoothdPath, 0, &vp, vfs_context_current()) != 0 || vp == NULLVP)
+        return false;       // root volume not mounted yet: the caller retries
+    bluetoothdVid = vnode_vid(vp);
+    __atomic_store_n(&bluetoothdVnode, vp, __ATOMIC_RELEASE);
+    if (shouldPatchSpecAdvSets && __atomic_load_n(&advSetsState, __ATOMIC_ACQUIRE) == AdvSetsPending)
+        resolveAdvSetsGateFromFile(vp);
+    vnode_put(vp);
+    return true;
+}
+
+static void logStats(thread_call_param_t, thread_call_param_t) {
+    SYSLOG(MODULE_SHORT, "stats: bluetoothd pages by vnode %u, by path %u; vn_getpath failures %u (last err %d); lookup tries %u; advsets state %u applied 0x%x, site pages seen undecided %u",
+           statPagesByVnode, statPagesByPath, statGetPathFail, statGetPathLastErr, lateStartTries,
+           __atomic_load_n(&advSetsState, __ATOMIC_ACQUIRE), __atomic_load_n(&advSetsApplied, __ATOMIC_ACQUIRE), statSitePending);
+}
+
+static void lateStartFixup(thread_call_param_t, thread_call_param_t) {
+    // Lilu activates plugins from the console hook, which runs before the root volume is
+    // mounted: keep trying (every 250 ms, up to 2 minutes) until the binary can be opened.
+    if (!rememberBluetoothdVnode()) {
+        if (++lateStartTries < 480 && lateStartCall != nullptr) {
+            uint64_t deadline = 0;
+            clock_interval_to_deadline(250, kMillisecondScale, &deadline);
+            thread_call_enter_delayed(lateStartCall, deadline);
+        } else {
+            SYSLOG(MODULE_SHORT, "late start: %s could not be opened, relying on path matching", kBluetoothdPath);
+        }
+        return;
+    }
+    SYSLOG(MODULE_SHORT, "late start: %s opened after %u tries (vid %u)", kBluetoothdPath, lateStartTries, bluetoothdVid);
+    // launchd gives early daemons low pids; 4096 covers a start that is minutes late too.
+    int pid = 0;
+    for (int i = 2; i < 4096 && pid == 0; i++) {
+        char name[32] {};
+        proc_name(i, name, sizeof(name));
+        if (strcmp(name, "bluetoothd") == 0)
+            pid = i;
+    }
+    if (pid == 0) {
+        SYSLOG(MODULE_SHORT, "late start: bluetoothd is not running yet, every page will be seen");
+        return;
+    }
+    vnode_t vp = NULLVP;
+    if (vnode_lookup(kBluetoothdPath, 0, &vp, vfs_context_current()) != 0 || vp == NULLVP) {
+        SYSLOG(MODULE_SHORT, "late start: bluetoothd (pid %d) already runs but %s cannot be opened, not restarting it", pid, kBluetoothdPath);
+        return;
+    }
+    // Terminate first, then drop the pages: a restarted bluetoothd that maps a still-cached
+    // page before the flush only loses that mapping, the next fault validates it again.
+    proc_signal(pid, SIGKILL);
+    int err = ubc_msync(vp, 0, ubc_getsize(vp), nullptr, UBC_INVALIDATE);
+    vnode_put(vp);
+    SYSLOG(MODULE_SHORT, "late start: bluetoothd (pid %d) was started before the patcher, restarted it with its pages dropped (ubc_msync %d)", pid, err);
+}
+
+static void scheduleLateStartFixup() {
+    if (!(shouldPatchSpecAdvSets || shouldPatchA2DPCheck) || checkKernelArgument("-btlfxnolatefix"))
+        return;
+    lateStartCall = thread_call_allocate(lateStartFixup, nullptr);
+    if (lateStartCall == nullptr)
+        return;
+    // Off the patcher's thread; the route is active by the time this runs.
+    uint64_t deadline = 0;
+    clock_interval_to_deadline(50, kMillisecondScale, &deadline);
+    thread_call_enter_delayed(lateStartCall, deadline);
+    // One summary line 30 s later: after bluetoothd has initialised the controller (~18 s
+    // into boot here) and before the message buffer wraps.
+    statsCall = thread_call_allocate(logStats, nullptr);
+    if (statsCall != nullptr) {
+        clock_interval_to_deadline(30, kSecondScale, &deadline);
+        thread_call_enter_delayed(statsCall, deadline);
+    }
+}
+
 #pragma mark - Patched functions
 
 static void patched_cs_validate_page(vnode_t vp, memory_object_t pager, memory_object_offset_t page_offset, const void *data, int *validated_p, int *tainted_p, int *nx_p) {
@@ -832,7 +1021,34 @@ static void patched_cs_validate_page(vnode_t vp, memory_object_t pager, memory_o
     int pathlen = PATH_MAX;
     FunctionCast(patched_cs_validate_page, orig_cs_validate)(vp, pager, page_offset, data, validated_p, tainted_p, nx_p);
     static constexpr size_t dirLength = sizeof("/usr/sbin/")-1;
-    if (vn_getpath(vp, path, &pathlen) == 0 && UNLIKELY(strncmp(path, "/usr/sbin/", dirLength) == 0)) {
+    // bluetoothd is recognised by vnode identity when it is known (see rememberBluetoothdVnode):
+    // vn_getpath() works from the name cache and can fail for a page-in, and a page that goes
+    // through here unrecognised is never validated again, i.e. never patched.
+    bool known = false;
+    vnode_t btVp = __atomic_load_n(&bluetoothdVnode, __ATOMIC_ACQUIRE);
+    if (btVp != NULLVP && vp == btVp && vnode_vid(vp) == bluetoothdVid) {
+        strlcpy(path, kBluetoothdPath, sizeof(path));
+        known = true;
+        __atomic_add_fetch(&statPagesByVnode, 1, __ATOMIC_RELAXED);
+    } else {
+        int err = vn_getpath(vp, path, &pathlen);
+        if (err == 0) {
+            known = true;
+            if (strcmp(path, kBluetoothdPath) == 0) {
+                __atomic_add_fetch(&statPagesByPath, 1, __ATOMIC_RELAXED);
+                // First page recognised by path: remember the vnode, so the following pages
+                // do not depend on vn_getpath() any more.
+                if (btVp == NULLVP) {
+                    bluetoothdVid = vnode_vid(vp);
+                    __atomic_store_n(&bluetoothdVnode, vp, __ATOMIC_RELEASE);
+                }
+            }
+        } else {
+            __atomic_add_fetch(&statGetPathFail, 1, __ATOMIC_RELAXED);
+            statGetPathLastErr = err;
+        }
+    }
+    if (known && UNLIKELY(strncmp(path, "/usr/sbin/", dirLength) == 0)) {
         if (strcmp(path + dirLength, "BlueTool") == 0) {
             searchAndPatch(data, PAGE_SIZE, path, kSkipUpdateFilePathOriginal, kSkipUpdateFilePathPatched);
             if (shouldPatchBoardId)
@@ -913,6 +1129,8 @@ static void pluginStart() {
         KernelPatcher::RouteRequest csRoute = KernelPatcher::RouteRequest("_cs_validate_page", patched_cs_validate_page, orig_cs_validate);
         if (!patcher.routeMultipleLong(KernelPatcher::KernelID, &csRoute, 1))
             SYSLOG(MODULE_SHORT, "failed to route cs validation pages");
+        else
+            scheduleLateStartFixup();
     });
 }
 

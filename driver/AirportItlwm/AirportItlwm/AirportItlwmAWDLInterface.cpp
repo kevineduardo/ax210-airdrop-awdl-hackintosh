@@ -50,8 +50,50 @@ attachToDataLinkLayer(IOOptionBits options, void *parameter)
     if (ret == kIOReturnSuccess && getIfnet()) {
         errno_t err = ifnet_set_lladdr(getIfnet(), &fMac, sizeof(fMac));
         AWDL_LOG("lladdr %s err %d", ether_sprintf(fMac.octet), err);
+        // MTU stays 1500: the iPhone sends 1497-byte IPv6 packets on AWDL (QUIC PMTU) and a
+        // 1484 MTU here made the AirDrop transfer stall for ~20 s (tested 2026-11-12).
+        // Bring awdl0 up from a thread call (not from this attach path, which may hold
+        // the network stack or the command gate), 1 s later. -itlawdlnoup disables it.
+        int v;
+        if (!PE_parse_boot_argn("-itlawdlnoup", &v, sizeof(v))) {
+            if (!fBringUp)
+                fBringUp = thread_call_allocate(bringUpCall, this);
+            if (fBringUp) {
+                uint64_t deadline;
+                clock_interval_to_deadline(1000, kMillisecondScale, &deadline);
+                retain();
+                if (thread_call_enter_delayed(fBringUp, deadline))
+                    release();   // already pending, it holds its own reference
+            }
+        }
     }
     return ret;
+}
+
+void AirportItlwmAWDLEthernetInterface::
+bringUpCall(thread_call_param_t p0, thread_call_param_t)
+{
+    auto self = static_cast<AirportItlwmAWDLEthernetInterface *>(p0);
+    ifnet_t ifp = self->getIfnet();
+    if (ifp && self->fOwner && !(ifnet_flags(ifp) & IFF_UP)) {
+        ifnet_set_flags(ifp, IFF_UP, IFF_UP);
+        // Same request ifconfig/configd would send; performCommand turns it into
+        // setAWDLLinkGated(up) on the command gate.
+        errno_t err = ifnet_ioctl(ifp, 0, SIOCSIFFLAGS, nullptr);
+        XYLog("AWDL %s: awdl0 up by driver, err %d, flags 0x%x\n", __FUNCTION__, err, ifnet_flags(ifp));
+    }
+    self->release();
+}
+
+void AirportItlwmAWDLEthernetInterface::
+free()
+{
+    if (fBringUp) {
+        thread_call_cancel(fBringUp);
+        thread_call_free(fBringUp);
+        fBringUp = nullptr;
+    }
+    AirportItlwmEthernetInterface::free();
 }
 
 SInt32 AirportItlwmAWDLEthernetInterface::
@@ -87,22 +129,67 @@ inputAWDLData(mbuf_t m, AirportItlwmAWDLInterface *awdl)
     const uint8_t *p = (const uint8_t *)mbuf_data(m);
     size_t len = mbuf_len(m);
     const struct ieee80211_frame *wh = (const struct ieee80211_frame *)p;
-    size_t hdr = sizeof(*wh);
-    if (ieee80211_has_qos(wh)) {
-        uint16_t qos = p[hdr] | (p[hdr + 1] << 8);
-        hdr += 2;
+    if (len < sizeof(*wh)) {
+        awdl->fDataRxBad++;
+        mbuf_freem(m);
+        return 1;
+    }
+    // Null / QoS-Null (power save, keep-alive): no payload, nothing to deliver.
+    if (wh->i_fc[0] & IEEE80211_FC0_SUBTYPE_NODATA) {
+        awdl->fDataRxNull++;
+        mbuf_freem(m);
+        return 1;
+    }
+    // Full 802.11 header length: QoS control, a fourth address and, with the Order bit
+    // on a QoS frame, the 4-byte HT Control field. HE peers (iPhone) start adding HT
+    // Control once data is flowing; the previous fixed 24(+2) made every such frame
+    // fail the SNAP check below (19 % of the data frames in the 2026-11-12 Tahoe tests,
+    // seen as multi-second stalls of the AirDrop QUIC transfer).
+    size_t hdr = ieee80211_get_hdrlen(wh);
+    if (ieee80211_has_htc(wh))
+        awdl->fDataRxHtc++;
+    if (ieee80211_has_qos(wh) && len >= hdr) {
+        size_t qoff = sizeof(*wh) + (ieee80211_has_addr4(wh) ? IEEE80211_ADDR_LEN : 0);
+        uint16_t qos = p[qoff] | (p[qoff + 1] << 8);
         if (qos & IEEE80211_QOS_AMSDU) {
-            // Not produced by the peer so far; count and drop.
+            // The hal clears this bit on hardware-deaggregated subframes; if it is
+            // still set the payload is a raw A-MSDU. Count and drop.
             awdl->fDataRxAmsdu++;
             mbuf_freem(m);
             return 1;
         }
     }
+    if ((wh->i_fc[1] & IEEE80211_FC1_MORE_FRAG) || (wh->i_seq[0] & 0x0f))
+        awdl->fDataRxFrag++;
     static const uint8_t kSnap[6] = { 0xaa, 0xaa, 0x03, 0x00, 0x17, 0xf2 };
     const size_t llc = 8, awdlHdr = 8;
+    // A-MSDU subframes. The Intel hardware de-aggregates A-MSDUs and hands every subframe
+    // over as its own MPDU. It only strips the subframe header when the payload starts with
+    // an RFC 1042 / bridge-tunnel SNAP; AWDL uses Apple's OUI (00:17:f2), so the subframe
+    // comes out as an 802.3 length frame wrapped in RFC 1042: aa aa 03 00 00 00 <len16>,
+    // followed by the real AWDL LLC. Example from a 25G332 capture (129-byte frame):
+    //   8800 2c00 <a1> <a2> <a3> 300e 0000 | aaaa03000000 005f | aaaa030017f20800 0304d700 0000 86dd | 60...
+    // The iPhone aggregates as soon as traffic flows, so without this 19-50 % of the data
+    // frames were dropped (AWDLDataRxBad) and the AirDrop QUIC transfer stalled for seconds.
+    static const uint8_t kRfc1042[6] = { 0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00 };
+    if (len >= hdr + 8 + llc + awdlHdr && !memcmp(p + hdr, kRfc1042, sizeof(kRfc1042)) &&
+        !memcmp(p + hdr + 8, kSnap, sizeof(kSnap))) {
+        size_t inner = ((size_t)p[hdr + 6] << 8) | p[hdr + 7];
+        if (inner <= mbuf_pkthdr_len(m) - hdr - 8) {
+            awdl->fDataRxAmsduSub++;
+            hdr += 8;
+        }
+    }
     if (len < hdr + llc + awdlHdr || memcmp(p + hdr, kSnap, sizeof(kSnap)) ||
         p[hdr + 6] != 0x08 || p[hdr + 7] != 0x00) {
         awdl->fDataRxBad++;
+        // Keep the start of the frame so the cause can be read from ioreg.
+        awdl->fDataRxBadLen = (uint32_t)mbuf_pkthdr_len(m);
+        size_t n = len < sizeof(awdl->fDataRxBadHead) ? len : sizeof(awdl->fDataRxBadHead);
+        memcpy(awdl->fDataRxBadHead, p, n);
+        awdl->fDataRxBadHeadLen = (uint8_t)n;
+        if (awdl->fDataRxBad <= 4 || (awdl->fDataRxBad & 0x1f) == 0)
+            awdl->publishDataState();
         mbuf_freem(m);
         return 1;
     }
@@ -122,8 +209,11 @@ inputAWDLData(mbuf_t m, AirportItlwmAWDLInterface *awdl)
     eh[13] = ethType[1];
     mbuf_pkthdr_setrcvif(m, getIfnet());
     awdl->fDataRx++;
-    if (!(dst[0] & 1))
+    if (!(dst[0] & 1)) {
         awdl->noteDataPeer(src);
+        awdl->fDataRxUcUs = hostUs();
+        awdl->notePeerDataRx(src, awdl->fDataRxUcUs);
+    }
     else
         awdl->fDataRxMc++;
     awdl->fDataRxLastLen = (uint32_t)mbuf_pkthdr_len(m);
@@ -277,6 +367,9 @@ enum : size_t {
     kBufGetCapacity  = 0x140,
     kBufGetBytes     = 0x158,
 };
+// IO80211SkywalkInterface::updateInterfaceDataStats, checked with tools/vtcheck.py --dump on
+// the 25G332 KC (IO80211AWDLProtocol and IO80211VirtualInterface: +0xe28).
+enum : size_t { kIfUpdateInterfaceDataStats = 0xe28 };
 template <typename R, typename... A>
 static inline R vcall(const void *obj, size_t slot, A... args)
 {
@@ -410,7 +503,7 @@ inputActionFrame(const uint8_t *frame, size_t len, const ieee80211_rxinfo *rxi)
         const struct ieee80211_frame *nwh = (const struct ieee80211_frame *)frame;
         size_t npayload = len - hdr;
         uint64_t nrxUs = awTimelineAllowed() ? hostRxUs(rxi) : 0;
-        trackPeer(af, npayload, nwh->i_addr2, nrxUs, rxi->rxi_chan);
+        trackPeer(af, npayload, nwh->i_addr2, nrxUs, rxi->rxi_chan, (int)rxi->rxi_rssi - 100);
         syncFromFrame(af, npayload, nwh->i_addr2, nrxUs);
         fRxAFNoInject++;
         if (fRxAFNoInject <= 8 || (fRxAFNoInject & 0xf) == 0)
@@ -462,7 +555,7 @@ inputActionFrame(const uint8_t *frame, size_t len, const ieee80211_rxinfo *rxi)
         snprintf(hv, sizeof(hv), "%02x%02x%02x", af[5], af[6], af[7]);
         setProperty("AWDLRxHdrVer", hv);
     }
-    trackPeer(af, payload, wh->i_addr2, rxUs, rxi->rxi_chan);
+    trackPeer(af, payload, wh->i_addr2, rxUs, rxi->rxi_chan, (int)rxi->rxi_rssi - 100);
     syncFromFrame(af, payload, wh->i_addr2, rxUs);
 
     // Consumes buf (peer manager input + bpf, then returnBuffer).
@@ -594,6 +687,14 @@ startAWTimeline()
     fLastValid = false;
     fInAW = false;
     fAWRunning = true;
+    // Pull model: the interface's output thread starts stopped and calls outputStart() only
+    // once started (IONetworkInterface::startOutputThread). B6408479 never started it:
+    // the stack queued 41 packets on awdl0 and none ever left. Starting again is harmless.
+    if (fController && fController->fAWDLBsdIf && fController->fAWDLBsdIf->fPullModel) {
+        IOReturn sr = fController->fAWDLBsdIf->startOutputThread();
+        fOutputStarts++;
+        fOutputStartRet = sr;
+    }
     publishAWDLAddress();
     AWDL_LOG("seq %u slot %llu us", fRefSeq, slotUs());
     scheduleNextAW(now);
@@ -627,6 +728,7 @@ stopAWTimeline()
         fDataQHead = (fDataQHead + 1) % kDataQueueLen;
         fDataQCount--;
     }
+    resumeOutput();     // pull model: the stack's queue must not stay parked on an empty one
     if (fInAW) {
         AWDLAWEndEvent end = {};
         end.endUsBE = OSSwapHostToBigInt32((uint32_t)hostUs());
@@ -709,6 +811,8 @@ postAWEvents()
     // A re-sync can map this boundary to the slot we already reported.
     if (fLastValid && seq == fLastSeq)
         return;
+
+    reportDataStats();
 
     // The peer manager expects end then start (it clears its "in AW" and
     // back-to-back flags on the end event).
@@ -839,7 +943,10 @@ syncFromFrame(const uint8_t *af, size_t len, const uint8_t *src, uint64_t rxUs)
 // Defaults; both can be changed at run time (setProperties). A new listen is
 // refused while one is pending or running, which bounds the duty cycle.
 enum : unsigned {
-    kListenDwellTU = 160,
+    // Longest single dwell. 160 TU cut the six-slot run of the Data sequence (393 ms) into
+    // two dwells with a ~30 ms hole and lost its last slot; with 420 TU one dwell covers the
+    // run: iPhone -> Mac 148 -> 443 kB/s (2026-11-13). Run time: awdlctl dwell <TU>.
+    kListenDwellTU = 420,
     kListenEveryNthSlot = 1,
     kListenDwellMinTU = 16,
     kListenDwellMaxTU = 1000,
@@ -916,6 +1023,18 @@ setProperties(OSObject *properties)
             return kIOReturnBadArgument;
         knobs.pumpus = v;
     }
+    if (OSBoolean *b = OSDynamicCast(OSBoolean, d->getObject("AWDLDataStatsOn"))) {
+        fDataStats = b->isTrue();
+        handled = true;
+    }
+    if (OSBoolean *b = OSDynamicCast(OSBoolean, d->getObject("AWDLIdleDwellOn"))) {
+        fIdleDwell = b->isTrue();
+        handled = true;
+    }
+    if (OSBoolean *b = OSDynamicCast(OSBoolean, d->getObject("AWDLAwGateOn"))) {
+        fAwGate = b->isTrue();          // a plain flag read on the work loop
+        handled = true;
+    }
     if (knobs.pump >= 0 || knobs.home >= 0 || knobs.lead >= 0 || knobs.dwellx >= 0 || knobs.pumpus >= 0 ||
         knobs.follow >= 0) {
         handled = true;
@@ -983,6 +1102,7 @@ publishListenState()
     setProperty("AWDLListenAligned", fListenAligned, 64);
     setProperty("AWDLListenNoSlot", fListenNoSlot, 64);
     setProperty("AWDLListenAlignedActive", fListenAlignedActive);
+    publishPeerTl();
     setProperty("AWDLPeerUpdates", fPeerUpdates, 64);
     setProperty("AWDLPeerPredHit", fPeerPredHit, 64);
     setProperty("AWDLPeerPredMiss", fPeerPredMiss, 64);
@@ -1091,6 +1211,16 @@ static const uint64_t kPeerReplaceUs = 10000000;
 // The TX gate trusts the tracked peer's predicted channel only this long after
 // its last frame (IO80211Family itself drops a peer after ~6 s without one).
 static const uint64_t kPeerGateStaleUs = 10000000;
+// AW gate (awGateOpen): usable part of the availability window and how long after the
+// last unicast frame from the peer it still counts as being in data mode.
+static const uint64_t kAwGateHeadUs = 1500;
+static const uint64_t kAwGateTailUs = 5000;
+static const uint64_t kAwGateDataModeUs = 300000;
+// Idle dwells (dwellTUFor): with no unicast traffic for kIdleAfterUs the listen dwell only
+// covers the availability window of the slot, not the whole 64-TU slot.
+static const uint64_t kIdleAfterUs = 3000000;
+static const uint64_t kIdleTailUs = 6000;
+static const int64_t kIdleLeadMaxUs = 12000;
 // Peer timeline within this of ours counts as aligned (the peer manager
 // tolerates about 10 ms between AW starts).
 static const int64_t kFollowTolUs = 6000;
@@ -1131,10 +1261,11 @@ peerChannelAt(uint64_t us) const
 // Keep the timeline of the peer we hear, whoever our sync master is: when we
 // are master ourselves syncFromFrame learns nothing about it.
 void AirportItlwmAWDLInterface::
-trackPeer(const uint8_t *af, size_t len, const uint8_t *src, uint64_t rxUs, unsigned rxChan)
+trackPeer(const uint8_t *af, size_t len, const uint8_t *src, uint64_t rxUs, unsigned rxChan, int rssiDbm)
 {
     if (!fAWRunning || !awListenAllowed())
         return;
+    peerTlLearn(af, len, src, rxUs, rssiDbm);
     if (fPeerValid && memcmp(src, &fPeerMac, sizeof(fPeerMac))) {
         // One peer is tracked. It has to be the one we exchange unicast data
         // with (the AirDrop peer), not whichever neighbour was heard first:
@@ -1143,10 +1274,18 @@ trackPeer(const uint8_t *af, size_t len, const uint8_t *src, uint64_t rxUs, unsi
         bool srcIsData = dataRecent && !memcmp(src, &fDataPeerMac, sizeof(fDataPeerMac));
         bool trackedIsData = dataRecent && !memcmp(&fPeerMac, &fDataPeerMac, sizeof(fDataPeerMac)) &&
             (int64_t)(rxUs - fPeerSeenUs) < (int64_t)kPeerStaleUs;
-        if (!srcIsData && (trackedIsData || (int64_t)(rxUs - fPeerSeenUs) < (int64_t)kPeerReplaceUs))
+        PeerTl *se = peerTlFind(src, false, rxUs);
+        PeerTl *te = peerTlFind((const uint8_t *)&fPeerMac, false, rxUs);
+        // A peer inside the bubble (cached by the family, the data peer, or simply strong)
+        // replaces one that is not: the first device heard is often a neighbour's.
+        bool srcCachedOnly = se && entryTrusted(*se, rxUs) && !(te && entryTrusted(*te, rxUs)) && !trackedIsData;
+        if (!srcIsData && !srcCachedOnly &&
+            (trackedIsData || (int64_t)(rxUs - fPeerSeenUs) < (int64_t)kPeerReplaceUs))
             return;
         if (srcIsData)
             fPeerSwitchData++;
+        else if (srcCachedOnly)
+            fPeerSwitchCached++;
         fPeerValid = false;
         fPeerChanValid = false;
         fFollowStreak = 0;
@@ -1224,7 +1363,10 @@ trackPeer(const uint8_t *af, size_t len, const uint8_t *src, uint64_t rxUs, unsi
         bool peerFollowsUs = !memcmp(&fPeerMaster, &fMac, sizeof(fMac));
         if (mis && peerFollowsUs)
             fPeerFollowsUsMis++;
-        if (fFollowPeer && isSyncMaster() && mis && !peerFollowsUs && fFollowStreak >= 3) {
+        bool trusted = peerTrusted(src, rxUs);
+        if (fFollowPeer && isSyncMaster() && mis && !peerFollowsUs && fFollowStreak >= 3 && !trusted)
+            fFollowUntrusted++;
+        if (fFollowPeer && isSyncMaster() && mis && !peerFollowsUs && fFollowStreak >= 3 && trusted) {
             fRefUs = fPeerRefUs;
             fRefSeq = fPeerRefSeq;
             fFollowAdopts++;
@@ -1238,6 +1380,278 @@ trackPeer(const uint8_t *af, size_t len, const uint8_t *src, uint64_t rxUs, unsi
     }
     if (!fListenAlignedActive)
         scheduleAlignedListen(hostUs());
+}
+
+#pragma mark - per-peer timelines
+
+AirportItlwmAWDLInterface::PeerTl *AirportItlwmAWDLInterface::
+peerTlFind(const uint8_t *mac, bool create, uint64_t now)
+{
+    PeerTl *freeSlot = nullptr, *oldest = nullptr;
+    for (unsigned i = 0; i < kPeerTlMax; i++) {
+        PeerTl &e = fPeerTl[i];
+        if (!e.used) {
+            if (!freeSlot)
+                freeSlot = &e;
+            continue;
+        }
+        if (!memcmp(&e.mac, mac, sizeof(e.mac)))
+            return &e;
+        if (!e.cached && (!oldest || e.seenUs < oldest->seenUs))
+            oldest = &e;
+    }
+    if (!create)
+        return nullptr;
+    PeerTl *e = freeSlot;
+    if (!e) {
+        // Full: reuse the entry heard longest ago, but never one still in use.
+        if (!oldest || (int64_t)(now - oldest->seenUs) < (int64_t)kPeerGateStaleUs)
+            return nullptr;
+        e = oldest;
+        fPeerTlEvict++;
+    }
+    bzero(e, sizeof(*e));
+    e->used = true;
+    memcpy(&e->mac, mac, sizeof(e->mac));
+    return e;
+}
+
+// Same TLVs as trackPeer (sync parameters 4, channel sequence 18), kept per source.
+void AirportItlwmAWDLInterface::
+peerTlLearn(const uint8_t *af, size_t len, const uint8_t *src, uint64_t rxUs, int rssiDbm)
+{
+    if (!src || (src[0] & 1) || !memcmp(src, &fMac, sizeof(fMac)))
+        return;
+    bool sync = false, haveChan = false;
+    int64_t refUs = 0;
+    uint16_t refSeq = 0, pmv = 0;
+    uint32_t slot = 0;
+    uint8_t chan[16];
+    uint8_t master[6] = {};
+    auto parseChan = [&](const uint8_t *v, size_t l) {
+        if (l < 6 || v[0] + 1 != 16)
+            return;
+        size_t size = v[1] == 0 ? 1 : (v[1] == 1 || v[1] == 3) ? 2 : 0;
+        if (!size || l < 6 + 16 * size)
+            return;
+        size_t at = v[1] == 1 ? 1 : 0;
+        for (unsigned i = 0; i < 16; i++)
+            chan[i] = v[6 + i * size + at];
+        haveChan = true;
+    };
+    size_t off = kAWDLFixedHeaderLen;
+    while (off + 3 <= len) {
+        uint8_t type = af[off];
+        uint16_t tlen = af[off + 1] | (af[off + 2] << 8);
+        const uint8_t *v = af + off + 3;
+        if (off + 3 + tlen > len)
+            break;
+        if (type == kAWDLSyncParamsTLV && tlen >= 31) {
+            uint16_t down = v[1] | (v[2] << 8);
+            uint16_t period = v[5] | (v[6] << 8);
+            uint16_t pm = v[27];
+            uint16_t nextSeq = v[29] | (v[30] << 8);
+            if (period >= 4 && period <= 64 && pm >= 1 && pm <= 16) {
+                refUs = (int64_t)rxUs + (int64_t)down * 1024;
+                slot = (uint32_t)period * pm * 1024;
+                refSeq = (uint16_t)(nextSeq / pm * pm + pm);
+                pmv = pm;
+                memcpy(master, v + 21, sizeof(master));
+                sync = true;
+            }
+            if (tlen > 33)
+                parseChan(v + 33, tlen - 33);
+        } else if (type == kAWDLChanSeqTLV) {
+            parseChan(v, tlen);
+        }
+        off += 3 + tlen;
+    }
+    if (!sync)
+        return;
+    PeerTl *e = peerTlFind(src, true, rxUs);
+    if (!e)
+        return;
+    e->seenUs = rxUs;
+    e->refUs = refUs;
+    e->refSeq = refSeq;
+    e->pm = pmv;
+    e->slotUs = slot;
+    if (haveChan) {
+        memcpy(e->chan, chan, sizeof(e->chan));
+        e->chanValid = true;
+    }
+    memcpy(&e->master, master, sizeof(e->master));
+    if (rssiDbm < 0 && rssiDbm > -110)
+        e->rssi = (int8_t)(e->rssi ? (3 * e->rssi + rssiDbm) / 4 : rssiDbm);
+    // Is this peer on our timeline (same slot numbering, boundaries within kFollowTolUs)?
+    if (slot == slotUs() && pmv == presenceMode()) {
+        int64_t sl = (int64_t)slot;
+        int64_t d = refUs - fRefUs;
+        int64_t k = floorDiv(d + sl / 2, sl);
+        int64_t err = d - k * sl;
+        uint16_t ownSeq = (uint16_t)(fRefSeq + k * pmv);
+        unsigned off = ((refSeq / pmv) % 16 + 16 - (ownSeq / pmv) % 16) % 16;
+        if (off != 0 || err > kFollowTolUs || err < -kFollowTolUs)
+            e->misaligned++;
+        else
+            e->aligned++;
+    } else {
+        e->misaligned++;
+    }
+}
+
+// A peer that matters to us: inside the "bubble". IO80211Family only caches a peer while
+// data flows (6-7 s at a time, measured 2026-11-14), so the cache alone leaves the peer
+// untrusted during discovery, which is when it matters. Signal strength is the family's own
+// criterion ("Not Routable ... outside bubble" at -70 dBm and below, the phone on the desk
+// at -33..-45), so a strong, recently heard peer counts too.
+bool AirportItlwmAWDLInterface::
+entryTrusted(const PeerTl &e, uint64_t now) const
+{
+    if (!e.used)
+        return false;
+    if (e.cached)
+        return true;
+    if (fDataPeerUs && (int64_t)(now - fDataPeerUs) < (int64_t)kPeerReplaceUs &&
+        !memcmp(&e.mac, &fDataPeerMac, sizeof(fDataPeerMac)))
+        return true;
+    return e.rssi && e.rssi >= fTrustRssi && (int64_t)(now - e.seenUs) < (int64_t)kPeerGateStaleUs;
+}
+
+bool AirportItlwmAWDLInterface::
+peerTrusted(const uint8_t *mac, uint64_t now)
+{
+    if (PeerTl *e = peerTlFind(mac, false, now))
+        return entryTrusted(*e, now);
+    return fDataPeerUs && (int64_t)(now - fDataPeerUs) < (int64_t)kPeerReplaceUs &&
+        !memcmp(mac, &fDataPeerMac, sizeof(fDataPeerMac));
+}
+
+void AirportItlwmAWDLInterface::
+notePeerDataRx(const uint8_t *mac, uint64_t us)
+{
+    if (PeerTl *e = peerTlFind(mac, false, us))
+        e->dataRxUs = us;
+}
+
+bool AirportItlwmAWDLInterface::
+dwellRunning()
+{
+    ieee80211com *ic = halIc();
+    uint8_t ch = 0;
+    int st = (ic && ic->ic_awdl_dwell_state) ? ic->ic_awdl_dwell_state(ic, &ch) : 0;
+    return st == 2 && ch == fTxChan;
+}
+
+// May a frame for dst leave now? Unicast: decided on dst's own timeline (is it on the
+// channel of the running dwell, and inside its availability window). A destination we
+// have no fresh timeline for counts as reachable, as an unknown peer always did.
+// Group-addressed: unchanged, on the tracked peer (peerGateChannel / awGateOpen).
+bool AirportItlwmAWDLInterface::
+destGateOpen(const uint8_t *dst, uint64_t now)
+{
+    if (dst[0] & 1) {
+        // Group-addressed (mDNS, ND): the peers that matter are the ones IO80211Family keeps
+        // in its peer cache (in range, routable). Send while at least one of them is on the
+        // dwell channel and inside its availability window (or in data mode). Before, this
+        // followed the single tracked peer, which could be a neighbour's device outside the
+        // bubble: the iPhone then never got the Mac's mDNS answers (2026-11-14, D9B251D7).
+        bool any = false;
+        for (unsigned i = 0; i < kPeerTlMax; i++) {
+            PeerTl &e = fPeerTl[i];
+            if (!e.used || !entryTrusted(e, now) || !e.slotUs || !e.pm ||
+                (int64_t)(now - e.seenUs) > (int64_t)kPeerGateStaleUs)
+                continue;
+            any = true;
+            int64_t slot = (int64_t)e.slotUs;
+            int64_t k = floorDiv((int64_t)now - e.refUs, slot);
+            if (fTxPump && e.chanValid) {
+                unsigned pc = e.chan[((uint16_t)(e.refSeq + k * e.pm) / e.pm) % 16];
+                if (pc && pc != fTxChan)
+                    continue;
+            }
+            if (!fAwGate || (e.dataRxUs && (int64_t)(now - e.dataRxUs) < (int64_t)kAwGateDataModeUs)) {
+                fGateMcCached++;
+                return true;
+            }
+            int64_t aw = slot / e.pm;
+            int64_t phase = (int64_t)now - e.refUs - k * slot;
+            if (phase >= (int64_t)kAwGateHeadUs && phase < aw - (int64_t)kAwGateTailUs) {
+                fGateMcCached++;
+                return true;
+            }
+        }
+        if (any)
+            return false;
+        // No cached peer with a fresh timeline: as before, on the tracked peer.
+        fGateMcTracked++;
+        if (fTxPump) {
+            unsigned pc = peerGateChannel(now);
+            if (pc && pc != fTxChan)
+                return false;
+        }
+        return awGateOpen(now);
+    }
+    PeerTl *e = peerTlFind(dst, false, now);
+    if (!e || !e->slotUs || !e->pm || (int64_t)(now - e->seenUs) > (int64_t)kPeerGateStaleUs) {
+        fGateUnknownDst++;
+        return true;
+    }
+    int64_t slot = (int64_t)e->slotUs;
+    int64_t k = floorDiv((int64_t)now - e->refUs, slot);
+    if (fTxPump && e->chanValid) {
+        uint16_t seq = (uint16_t)(e->refSeq + k * e->pm);
+        unsigned pc = e->chan[(seq / e->pm) % 16];
+        if (pc && pc != fTxChan) {
+            fGateDstAway++;
+            return false;
+        }
+    }
+    if (!fAwGate)
+        return true;
+    // Traffic in progress with this peer: it keeps its extension windows open.
+    if (e->dataRxUs && (int64_t)(now - e->dataRxUs) < (int64_t)kAwGateDataModeUs)
+        return true;
+    int64_t aw = slot / e->pm;
+    int64_t phase = (int64_t)now - e->refUs - k * slot;
+    if (phase >= (int64_t)kAwGateHeadUs && phase < aw - (int64_t)kAwGateTailUs)
+        return true;
+    fGateDstAw++;
+    return false;
+}
+
+void AirportItlwmAWDLInterface::
+publishPeerTl()
+{
+    char buf[kPeerTlMax * 72 + 1] = {};
+    uint64_t now = hostUs();
+    size_t n = 0;
+    unsigned count = 0;
+    for (unsigned i = 0; i < kPeerTlMax && n + 72 < sizeof(buf); i++) {
+        PeerTl &e = fPeerTl[i];
+        if (!e.used || (int64_t)(now - e.seenUs) > (int64_t)kPeerStaleUs)
+            continue;
+        unsigned pc = 0;
+        if (e.chanValid && e.slotUs && e.pm) {
+            int64_t k = floorDiv((int64_t)now - e.refUs, (int64_t)e.slotUs);
+            pc = e.chan[((uint16_t)(e.refSeq + k * e.pm) / e.pm) % 16];
+        }
+        // mac(last 3)[* cached | + trusted] age channel rssi m=master(last 2) a=aligned/misaligned
+        n += snprintf(buf + n, sizeof(buf) - n, "%s%02x:%02x:%02x%s %llums ch%u %ddBm m=%02x:%02x a=%u/%u",
+                      count ? ", " : "", e.mac.octet[3], e.mac.octet[4], e.mac.octet[5],
+                      e.cached ? "*" : entryTrusted(e, now) ? "+" : "",
+                      (unsigned long long)((now - e.seenUs) / 1000), pc, (int)e.rssi,
+                      e.master.octet[4], e.master.octet[5], e.aligned, e.misaligned);
+        count++;
+    }
+    setProperty("AWDLPeers", buf);
+    setProperty("AWDLPeerCount", count, 32);
+    char g[240];
+    snprintf(g, sizeof(g), "skips %llu unknown %llu away %llu aw %llu evict %llu mc cached %llu tracked %llu "
+             "switchcached %llu followuntrusted %llu",
+             fGateSkips, fGateUnknownDst, fGateDstAway, fGateDstAw, fPeerTlEvict, fGateMcCached, fGateMcTracked,
+             fPeerSwitchCached, fFollowUntrusted);
+    setProperty("AWDLDestGate", g);
 }
 
 // Channel of the tracked peer for the TX gate. A peer that was not heard for
@@ -1296,7 +1710,8 @@ scheduleOwnListen(uint64_t afterUs)
     uint64_t from = afterUs > now ? afterUs : now;
     int64_t slot = (int64_t)slotUs();
     uint16_t pm = presenceMode();
-    int64_t k = floorDiv((int64_t)from + fListenLeadUs - fRefUs, slot) + 1;
+    const int64_t lead = listenLeadUs(now);
+    int64_t k = floorDiv((int64_t)from + lead - fRefUs, slot) + 1;
     // The peer we track (the phone during AirDrop) must be heard at least every
     // few seconds or IO80211Family drops it from NDP (lastAF ~6 s). When our own
     // slot keeps us home (or off AWDL) but the peer's slot at that time is on a
@@ -1326,14 +1741,15 @@ scheduleOwnListen(uint64_t afterUs)
         }
         if (fromPeer)
             fListenPeerSlots++;
-        uint32_t dwell = (uint32_t)((run * slot + fListenLeadUs) / 1024);
+        uint32_t dwell = dwellTUFor(now, run, slot, pm);
         if (dwell > fListenDwellTU)
             dwell = fListenDwellTU;
         dwell += fDwellExtraTU;             // itlawdldwellx=, 0 by default
         fListenNextChan = chan;
         fListenNextDwellTU = dwell;
+        fListenNextLeadUs = lead;
         uint64_t abs;
-        nanoseconds_to_absolutetime((uint64_t)(fRefUs + k * slot - fListenLeadUs) * 1000, &abs);
+        nanoseconds_to_absolutetime((uint64_t)(fRefUs + k * slot - lead) * 1000, &abs);
         fListenTimer->cancelTimeout();
         fListenTimer->wakeAtTime(abs);
         fListenAlignedActive = true;
@@ -1363,7 +1779,8 @@ scheduleAlignedListen(uint64_t afterUs)
     unsigned forced = awListenChannelOverride();
     int64_t slot = fPeerSlotUs;
     uint64_t from = afterUs > now ? afterUs : now;
-    int64_t k = floorDiv((int64_t)from + fListenLeadUs - fPeerRefUs, slot) + 1;
+    const int64_t lead = listenLeadUs(now);
+    int64_t k = floorDiv((int64_t)from + lead - fPeerRefUs, slot) + 1;
     for (int i = 0; i < 32; i++, k++) {
         uint16_t seq = (uint16_t)(fPeerRefSeq + k * fPeerPm);
         unsigned chan = fPeerChan[(seq / fPeerPm) % 16];
@@ -1373,13 +1790,14 @@ scheduleAlignedListen(uint64_t afterUs)
         unsigned run = 1;
         while (run < 16 && fPeerChan[((seq / fPeerPm) + run) % 16] == chan)
             run++;
-        uint32_t dwell = (uint32_t)((run * slot + fListenLeadUs) / 1024);
+        uint32_t dwell = dwellTUFor(now, run, slot, fPeerPm);
         if (dwell > fListenDwellTU)
             dwell = fListenDwellTU;
         fListenNextChan = (uint8_t)chan;
         fListenNextDwellTU = dwell;
+        fListenNextLeadUs = lead;
         uint64_t abs;
-        nanoseconds_to_absolutetime((uint64_t)(fPeerRefUs + k * slot - fListenLeadUs) * 1000, &abs);
+        nanoseconds_to_absolutetime((uint64_t)(fPeerRefUs + k * slot - lead) * 1000, &abs);
         fListenTimer->cancelTimeout();
         fListenTimer->wakeAtTime(abs);
         fListenAlignedActive = true;
@@ -1407,7 +1825,7 @@ listenTimerFired(OSObject *owner, IOTimerEventSource *)
                 if (awDataAllowed())
                     that->fListenOwn++;
                 that->fTxReqUs = now;
-                that->scheduleTx(that->fListenNextChan, now + that->fListenLeadUs);
+                that->scheduleTx(that->fListenNextChan, now + that->fListenNextLeadUs);
             }
         }
     }
@@ -1433,10 +1851,13 @@ scheduleTx(uint8_t chan, uint64_t slotStartUs)
         return;
     // Diagnostics: if the previous dwell's START was not seen yet, look now.
     noteRocStart();
-    if (fAfTxMode == 3) {
-        fTxSkipMode++;
-        return;
-    }
+    // AF TX mode 3 ("awdl_aftxmode suppress" in IO80211AWDLPeerManager::setAFTXMode) is set by
+    // the family in the Data and Infra Priority schedule states. It silences the periodic
+    // sync frame (PSF) only: the original port skipped the whole TX window here, so in those
+    // states no master indication and no data left the Mac (26.7.2, 2026-11-12: Infra Priority
+    // with 256 frames queued, AWDLDataTx 0, the Mac never showed up on the iPhone).
+    if (fAfTxMode == 3 && !isSyncMaster())
+        fTxSkipMode++;              // PSF suppressed in this window (never while sync master)
     if (fTxPhase == 3 && !fTxPumpSawRun)
         fPumpNoRun++;               // previous pump window never saw its dwell run
     fTxChan = chan;
@@ -1479,6 +1900,213 @@ noteRocStart()
     while (i < 7 && off >= lim[i])
         i++;
     fRocStartHist[i]++;
+}
+
+// Length and lead of the next listen dwell.
+//
+// Every dwell takes the radio off the station channel. Staying for the whole slot plus the
+// lead (65 + 30 ms, three times per 1.05 s supercycle, two of them back to back) left the
+// infrastructure link dead for 250-490 ms at a time: ping to the gateway averaged ~100 ms
+// (max 450-740 ms) against 6 ms with awdl0 down (2026-11-12, 25G332, AP on 100/80).
+// A real idle AWDL device only has to be on the social channel for the availability window
+// (presence mode 4 = one AW in four); the extension windows matter only while unicast
+// traffic flows. So: idle -> AW + a short lead, traffic within kIdleAfterUs -> as before.
+bool AirportItlwmAWDLInterface::
+dwellIdle(uint64_t now) const
+{
+    if (!fIdleDwell)
+        return false;
+    if (fDataQCount)
+        return false;
+    if (fDataRxUcUs && (int64_t)(now - fDataRxUcUs) < (int64_t)kIdleAfterUs)
+        return false;
+    if (fDataTxUcUs && (int64_t)(now - fDataTxUcUs) < (int64_t)kIdleAfterUs)
+        return false;
+    return true;
+}
+
+int64_t AirportItlwmAWDLInterface::
+listenLeadUs(uint64_t now) const
+{
+    return dwellIdle(now) && fListenLeadUs > kIdleLeadMaxUs ? kIdleLeadMaxUs : fListenLeadUs;
+}
+
+uint32_t AirportItlwmAWDLInterface::
+dwellTUFor(uint64_t now, unsigned run, int64_t slot, uint16_t pm)
+{
+    if (dwellIdle(now) && pm) {
+        fListenIdle++;
+        return (uint32_t)((slot / pm + listenLeadUs(now) + (int64_t)kIdleTailUs) / 1024);
+    }
+    fListenFull++;
+    return (uint32_t)((run * slot + fListenLeadUs) / 1024);
+}
+
+// Data-path packet counts for the peer manager.
+//
+// IO80211AWDLPeerManager::monitorAWDLDataMode decides whether AWDL carries traffic from two
+// counters in the peer manager (+0x7b0 tx, +0x79c rx: "In AW: Tx:%d Rx:%d"). A firmware
+// driver feeds them through IO80211SkywalkInterface::updateInterfaceDataStats (vtable +0xe28,
+// -> IO80211PeerManager::updateLocalCounters, which copies stats+0x08 and stats+0x18).
+// awdl0's data goes through our own IOEthernetInterface, so the counters stayed at 0, the
+// peer manager never saw a transfer (HasActAirDrop 0, indatamode 0) and kept the "Low Power"
+// schedule of 3 slots in 16: AirDrop ran at ~400 KB/s. Report the real counts once per slot.
+// The structure is read up to +0x680 (four latency bin blocks of 0x140 from +0x180); the
+// fields we do not set are zero.
+// IO80211VirtualInterface::cachePeer(ether_addr *, unsigned int *result). A native driver asks
+// for this before unicast to a peer: the family puts the peer in its "firmware" peer cache
+// (IO80211P2PDataPathManager::addPeerToFWCache -> our setPEER_CACHE_CONTROL) and counts it as
+// cached. awdl0's data does not go through the family's TX path here, so nobody ever asked:
+// "peers:3, cached:0" during an AirDrop. With no cached peer the family applies the idle rule
+// (isInfraRealtimePacketThresholdAllowed: any 50 infra packets = Real Time), keeps the
+// schedule in Infra Priority (3 slots in 16) and the transfer crawls (~60 KB/s, 2026-11-13).
+// Off with -itlawdlnopeercache.
+extern "C" bool _ZN23IO80211VirtualInterface9cachePeerEP10ether_addrPj(
+    IO80211VirtualInterface *, ether_addr *, unsigned int *);
+// cachePeer refuses ("Data is disabled on the interface") while either flag of the interface
+// is set: suspended (+0x54: quiet mode, cleared by the family when AWDL resumes) or
+// peer-manager data disabled (+0x55). IO80211AWDLPeerManager::reset() sets the second one and
+// nothing in the family clears it again; awdl0 lives across resets here, so once AWDL is
+// running again the driver clears it, as for a freshly created interface.
+extern "C" bool _ZN23IO80211VirtualInterface20isInterfaceSuspendedEv(IO80211VirtualInterface *);
+extern "C" bool _ZN23IO80211VirtualInterface26getPeerManagerDataDisabledEv(IO80211VirtualInterface *);
+extern "C" void _ZN23IO80211VirtualInterface26setPeerManagerDataDisabledEb(IO80211VirtualInterface *, bool);
+
+void AirportItlwmAWDLInterface::
+cacheDataPeer()
+{
+    static int allowed = -1;
+    if (allowed < 0) {
+        int v;
+        allowed = PE_parse_boot_argn("-itlawdlnopeercache", &v, sizeof(v)) ? 0 : 1;
+    }
+    if (allowed != 1 || !fDataPeerUs)
+        return;
+    uint64_t now = hostUs();
+    if ((int64_t)(now - fDataPeerUs) > 2000000)
+        return;                             // no unicast data with a peer right now
+    if (!memcmp(&fCachedPeerMac, &fDataPeerMac, sizeof(fCachedPeerMac)) &&
+        (int64_t)(now - fCachedPeerUs) < 5000000)
+        return;                             // asked for this peer a moment ago
+    // Third condition of cachePeer: IO80211SkywalkInterface::isInterfaceEnabled(). A native
+    // driver's virtual interface is enabled through IO80211VirtualInterface::setInterfaceEnable
+    // when the system brings it up; awdl0 is our own IOEthernetInterface, so the family never
+    // saw it enabled (3DE74834: suspended 0, dataoff 0, still "Data is disabled").
+    // -itlawdlnoifenable keeps the old state.
+    static int ifEnable = -1;
+    if (ifEnable < 0) {
+        int v;
+        ifEnable = PE_parse_boot_argn("-itlawdlnoifenable", &v, sizeof(v)) ? 0 : 1;
+    }
+    bool wasEnabled = isInterfaceEnabled();
+    if (!wasEnabled && ifEnable == 1 && fAWRunning) {
+        setInterfaceEnable(true);
+        fPeerCacheIfEnabled++;
+    }
+    bool suspended = _ZN23IO80211VirtualInterface20isInterfaceSuspendedEv(this);
+    bool dataOff = _ZN23IO80211VirtualInterface26getPeerManagerDataDisabledEv(this);
+    if (dataOff && fAWRunning && !suspended) {
+        _ZN23IO80211VirtualInterface26setPeerManagerDataDisabledEb(this, false);
+        fPeerCacheDataOn++;
+    }
+    unsigned int result = 0;
+    ether_addr mac = fDataPeerMac;
+    bool ok = _ZN23IO80211VirtualInterface9cachePeerEP10ether_addrPj(this, &mac, &result);
+    fCachedPeerMac = fDataPeerMac;
+    fCachedPeerUs = now;
+    fPeerCacheReq++;
+    char g[192];
+    snprintf(g, sizeof(g), "req %llu last %s ok %d result %u ifenabled %d (set %llu) suspended %d dataoff %d cleared %llu completed %llu stamps %llu",
+             fPeerCacheReq, ether_sprintf((uint8_t *)&mac), ok ? 1 : 0, result, wasEnabled ? 1 : 0,
+             fPeerCacheIfEnabled, suspended ? 1 : 0, dataOff ? 1 : 0, fPeerCacheDataOn, fPeerCacheCompleted, fPeerActivityStamps);
+    setProperty("AWDLPeerCacheReq", g);
+}
+
+// The family drops a cached peer "Due to Inactivity" when four per-peer time stamps are all
+// older than its threshold (IO80211AWDLPeer::monitorCachedPeerActivity): last packet queued
+// for the peer, last unicast received from it, and two more it keeps itself. Its own TX and
+// RX paths set them; awdl0's data bypasses those, so a peer was uncached ~3.7 s after every
+// add, in the middle of a transfer (7FBBB54D, 2026-11-13: Mac -> iPhone ran at ~700 kB/s for
+// 13 s and stopped dead at the uncache). Stamp the peer from our own unicast activity.
+extern "C" void _ZN11IO80211Peer18setLastQueuePacketEy(void *peer, unsigned long long);
+extern "C" void _ZN11IO80211Peer28setLastRxUnicastLinkActivityEy(void *peer, unsigned long long);
+enum : size_t { kIfFindPeer = 0xcd0 };      // IO80211VirtualInterface::findPeer(ether_addr&), 25G332
+
+void AirportItlwmAWDLInterface::
+stampDataPeerActivity()
+{
+    if (!fDataPeerUs)
+        return;
+    uint64_t now = hostUs();
+    const int64_t recent = 1000000;
+    bool tx = fDataTxUcUs && (int64_t)(now - fDataTxUcUs) < recent;
+    bool rx = fDataRxUcUs && (int64_t)(now - fDataRxUcUs) < recent;
+    if ((!tx && !rx) || (int64_t)(now - fDataPeerUs) > recent)
+        return;
+    ether_addr mac = fDataPeerMac;
+    void *peer = vcall<void *>(this, kIfFindPeer, &mac);
+    if (!peer)
+        return;
+    uint64_t abs = mach_absolute_time();
+    if (tx)
+        _ZN11IO80211Peer18setLastQueuePacketEy(peer, abs);
+    if (rx)
+        _ZN11IO80211Peer28setLastRxUnicastLinkActivityEy(peer, abs);
+    fPeerActivityStamps++;
+}
+
+void AirportItlwmAWDLInterface::
+reportDataStats()
+{
+    completePeerCacheOps();
+    stampDataPeerActivity();
+    cacheDataPeer();
+    if (!fDataStats || (fDataTx == fStatsTx && fDataRx == fStatsRx))
+        return;
+    static uint8_t stats[0x800];            // work loop only
+    bzero(stats, sizeof(stats));
+    uint32_t tx = (uint32_t)fDataTx, rx = (uint32_t)fDataRx;
+    memcpy(stats + 0x08, &tx, sizeof(tx));
+    memcpy(stats + 0x18, &rx, sizeof(rx));
+    // The family's own per-packet paths (IO80211PeerManager::skywalkLogTxPacket /
+    // skywalkInputPacket) also count every packet in two totals, which
+    // IO80211PeerManager::updateLocalCounters takes from +0x30 (tx) and +0xd8 (rx).
+    memcpy(stats + 0x30, &tx, sizeof(tx));
+    memcpy(stats + 0xd8, &rx, sizeof(rx));
+    IOReturn ret = vcall<IOReturn>(this, kIfUpdateInterfaceDataStats, stats);
+    fStatsTx = fDataTx;
+    fStatsRx = fDataRx;
+    fStatsReports++;
+    fStatsLastRet = ret;
+}
+
+// Availability-window gate. Every 64-TU slot of the AWDL sequence starts with one
+// availability window (the sync period, 16 TU) in which a peer on that channel must
+// listen; the rest of the slot is extension windows, which an idle peer skips and only
+// a peer with traffic in progress stays awake for. Frames handed to the firmware
+// "as soon as the dwell runs" therefore reach an idle iPhone only by luck: on
+// 2026-11-12 (25G332) it asked 11 times in 104 s for the Mac's SRV record, each answer
+// left within 5 ms, and none was received, so the Mac took ~2 min to show up in the
+// share sheet. Apple's own driver sends group-addressed frames inside the AW.
+// Returns false when the frame at the head of the queue should wait for the next AW.
+bool AirportItlwmAWDLInterface::
+awGateOpen(uint64_t now)
+{
+    if (!fAwGate || !fPeerValid || !fPeerSlotUs || !fPeerPm)
+        return true;
+    if ((int64_t)(now - fPeerSeenUs) > (int64_t)kPeerGateStaleUs)
+        return true;                    // timeline no longer evidence
+    // Traffic in progress: the peer keeps its extension windows open (data mode) and
+    // holding frames would only add latency to ACKs.
+    if (fDataRxUcUs && (int64_t)(now - fDataRxUcUs) < (int64_t)kAwGateDataModeUs)
+        return true;
+    int64_t slot = (int64_t)fPeerSlotUs;
+    int64_t aw = slot / fPeerPm;
+    int64_t phase = (int64_t)now - fPeerRefUs;
+    phase -= floorDiv(phase, slot) * slot;
+    // Guard both edges: the peer timeline is known to a few ms (PeerErrUs), and the
+    // frame still has to get through the firmware queue.
+    return phase >= (int64_t)kAwGateHeadUs && phase < aw - (int64_t)kAwGateTailUs;
 }
 
 // Whether the firmware dwell runs on fTxChan right now and the peer is on that
@@ -1525,16 +2153,29 @@ pumpTick()
     }
     uint8_t ch = 0;
     int st = 0;
-    if (pumpCanSend(&ch, &st)) {
-        bool late = !fTxPumpSawRun && now > fTxSlotUs + kTxMIAtUs;
-        fTxPumpSawRun = true;
-        if (!fTxPumpPsfDone) {
-            fTxPumpPsfDone = !fSyncTmplLen || sendAWDLFrame(false);
-            if (fTxPumpPsfDone && late)
-                fPumpLateAF++;
+    // Action frames keep following the tracked peer (pumpCanSend); queued data is
+    // released per destination in flushData, so only the dwell itself is required.
+    bool afOk = pumpCanSend(&ch, &st);
+    bool dwellOk = st == 2 && ch == fTxChan;
+    if (dwellOk) {
+        if (afOk) {
+            bool late = !fTxPumpSawRun && now > fTxSlotUs + kTxMIAtUs;
+            fTxPumpSawRun = true;
+            if (!fTxPumpPsfDone) {
+                // AF TX mode 3 suppresses the PSF, but never while we are the sync master: the
+            // peers that elected us need it to stay synchronised. Without it a real Mac
+            // dropped us within seconds (2026-11-14: MacBook saw the Mac 127 ms after the
+            // family went from mode 3 to 0, and never while master in mode 3).
+            bool psfSuppressed = fAfTxMode == 3 && !isSyncMaster();
+            if (fAfTxMode == 3 && !psfSuppressed && fSyncTmplLen)
+                fTxPsfMasterMode3++;
+            fTxPumpPsfDone = !fSyncTmplLen || psfSuppressed || sendAWDLFrame(false);
+                if (fTxPumpPsfDone && late)
+                    fPumpLateAF++;
+            }
+            if (fTxPumpPsfDone && !fTxPumpMiDone)
+                fTxPumpMiDone = !fMITmplLen || sendAWDLFrame(true);
         }
-        if (fTxPumpPsfDone && !fTxPumpMiDone)
-            fTxPumpMiDone = !fMITmplLen || sendAWDLFrame(true);
         if (awDataAllowed())
             flushData();
     } else if (fTxPumpSawRun && st == 0) {
@@ -1560,7 +2201,7 @@ txTimerFired(OSObject *owner, IOTimerEventSource *)
         return;
     }
     if (that->fTxPhase == 1) {
-        if (that->fSyncTmplLen)
+        if (that->fSyncTmplLen && (that->fAfTxMode != 3 || that->isSyncMaster()))
             that->sendAWDLFrame(false);
         that->fTxPhase = 2;
         uint64_t abs;
@@ -1748,6 +2389,8 @@ enqueueData(mbuf_t m)
             if (dst[0] & 1) {
                 fDataQMc[slot] = 1;
                 fMcQueued++;
+            } else {
+                fDataTxUcUs = fDataQUs[slot];
             }
         }
     }
@@ -1756,7 +2399,7 @@ enqueueData(mbuf_t m)
     // -itlawdltxpump: a frame queued while the dwell runs (typically a TCP ACK
     // or reply to what the peer just sent in this slot) leaves now instead of
     // waiting for the next dwell's flush point.
-    if (fTxPump && fTxPhase == 3 && pumpCanSend(nullptr, nullptr)) {
+    if (fTxPump && fTxPhase == 3 && dwellRunning()) {
         fPumpImmediate++;
         flushData();
     }
@@ -1796,58 +2439,124 @@ flushData()
     if (!ic || !ic->ic_awdl_tx)
         return;
     static uint8_t frame[2048];             // work loop only
-    while (fDataQCount) {
-        mbuf_t m = fDataQ[fDataQHead];
+    // One pass over the queue in order. A frame whose destination is not reachable right
+    // now stays queued (compacted towards the head, order kept) and does not block frames
+    // for other destinations behind it. Once a destination was held in this pass, later
+    // frames for it are held too, so the order per destination never changes.
+    uint8_t held[8][6];
+    unsigned nheld = 0;
+    bool holdAllUc = false, mcDecided = false, mcOpen = true, stop = false, anyHeld = false;
+    unsigned count = fDataQCount, w = 0;
+    const size_t hdr = sizeof(struct ieee80211_frame), llc = 8, ad = 8;
+    for (unsigned i = 0; i < count; i++) {
+        unsigned idx = (fDataQHead + i) % kDataQueueLen;
+        mbuf_t m = fDataQ[idx];
         size_t plen = mbuf_pkthdr_len(m);
-        const size_t hdr = sizeof(struct ieee80211_frame), llc = 8, ad = 8;
-        if (hostUs() - fDataQUs[fDataQHead] > kDataMaxAgeUs) {
+        uint64_t nowUs = hostUs();
+        bool keep = stop;
+        uint8_t eh[14] = {};
+        bool haveEh = plen >= 14 && mbuf_copydata(m, 0, sizeof(eh), eh) == 0;
+        if (!keep && nowUs - fDataQUs[idx] > kDataMaxAgeUs) {
             // Queued while no dwell could carry it (AWDL idle, peer gone): the
             // stack has long retransmitted or given up, do not send it now.
             fDataTxDropStale++;
-        } else if (plen < 14 || hdr + llc + ad + plen - 14 > sizeof(frame)) {
+        } else if (!keep && (!haveEh || hdr + llc + ad + plen - 14 > sizeof(frame))) {
             fDataTxErr++;
-        } else {
-            uint8_t eh[14];
-            mbuf_copydata(m, 0, sizeof(eh), eh);
-            memset(frame, 0, hdr + llc + ad);
-            struct ieee80211_frame *wh = (struct ieee80211_frame *)frame;
-            wh->i_fc[0] = IEEE80211_FC0_VERSION_0 | IEEE80211_FC0_TYPE_DATA | IEEE80211_FC0_SUBTYPE_DATA;
-            memcpy(wh->i_addr1, eh, 6);
-            memcpy(wh->i_addr2, &fMac, 6);
-            memcpy(wh->i_addr3, kAWDLBssid, 6);
-            uint16_t sc = (uint16_t)(fTxSeq++ << 4);
-            wh->i_seq[0] = sc & 0xff;
-            wh->i_seq[1] = sc >> 8;
-            uint8_t *l = frame + hdr;
-            l[0] = 0xaa; l[1] = 0xaa; l[2] = 0x03;
-            l[3] = 0x00; l[4] = 0x17; l[5] = 0xf2;
-            l[6] = 0x08; l[7] = 0x00;
-            uint8_t *a = l + llc;
-            a[0] = 0x03; a[1] = 0x04;
-            a[2] = fDataSeq & 0xff; a[3] = fDataSeq >> 8;
-            a[6] = eh[12]; a[7] = eh[13];
-            mbuf_copydata(m, 14, plen - 14, a + ad);
-            int err = ic->ic_awdl_tx(ic, fTxChan, frame, hdr + llc + ad + plen - 14);
-            if (err == EAGAIN) {
-                fDataTxDeferred++;
-                return;             // keep it for the next dwell
-            }
-            if (err) {
-                fDataTxErr++;
+        } else if (!keep) {
+            bool open;
+            if (eh[0] & 1) {
+                if (!mcDecided) {
+                    mcOpen = destGateOpen(eh, nowUs);
+                    mcDecided = true;
+                }
+                open = mcOpen;
             } else {
-                fDataTx++;
-                fDataSeq++;
-                noteDataSent(fDataQHead);
-                // if_output counts the bytes; packets come from the driver stats.
-                if (fController && fController->fAWDLBsdIf && fController->fAWDLBsdIf->getIfnet())
-                    ifnet_stat_increment_out(fController->fAWDLBsdIf->getIfnet(), 1, 0, 0);
+                open = !holdAllUc;
+                for (unsigned j = 0; open && j < nheld; j++)
+                    if (!memcmp(held[j], eh, 6))
+                        open = false;
+                if (open && !destGateOpen(eh, nowUs)) {
+                    open = false;
+                    if (nheld < 8)
+                        memcpy(held[nheld++], eh, 6);
+                    else
+                        holdAllUc = true;
+                }
+            }
+            if (!open) {
+                keep = true;
+                anyHeld = true;
+            } else {
+                if (anyHeld)
+                    fGateSkips++;
+                if (fAwGate)
+                    fAwGateSent++;
+                memset(frame, 0, hdr + llc + ad);
+                struct ieee80211_frame *wh = (struct ieee80211_frame *)frame;
+                wh->i_fc[0] = IEEE80211_FC0_VERSION_0 | IEEE80211_FC0_TYPE_DATA | IEEE80211_FC0_SUBTYPE_DATA;
+                memcpy(wh->i_addr1, eh, 6);
+                memcpy(wh->i_addr2, &fMac, 6);
+                memcpy(wh->i_addr3, kAWDLBssid, 6);
+                uint16_t sc = (uint16_t)(fTxSeq++ << 4);
+                wh->i_seq[0] = sc & 0xff;
+                wh->i_seq[1] = sc >> 8;
+                uint8_t *l = frame + hdr;
+                l[0] = 0xaa; l[1] = 0xaa; l[2] = 0x03;
+                l[3] = 0x00; l[4] = 0x17; l[5] = 0xf2;
+                l[6] = 0x08; l[7] = 0x00;
+                uint8_t *a = l + llc;
+                a[0] = 0x03; a[1] = 0x04;
+                a[2] = fDataSeq & 0xff; a[3] = fDataSeq >> 8;
+                a[6] = eh[12]; a[7] = eh[13];
+                mbuf_copydata(m, 14, plen - 14, a + ad);
+                int err = ic->ic_awdl_tx(ic, fTxChan, frame, hdr + llc + ad + plen - 14);
+                if (err == EAGAIN) {
+                    fDataTxDeferred++;
+                    fTxSeq--;               // not sent: keep it and everything behind it
+                    keep = true;
+                    stop = true;
+                } else if (err) {
+                    fDataTxErr++;
+                } else {
+                    fDataTx++;
+                    fDataSeq++;
+                    noteDataSent(idx);
+                    // if_output counts the bytes; packets come from the driver stats.
+                    if (fController && fController->fAWDLBsdIf && fController->fAWDLBsdIf->getIfnet())
+                        ifnet_stat_increment_out(fController->fAWDLBsdIf->getIfnet(), 1, 0, 0);
+                }
             }
         }
-        mbuf_freem(m);
-        fDataQ[fDataQHead] = nullptr;
-        fDataQHead = (fDataQHead + 1) % kDataQueueLen;
-        fDataQCount--;
+        if (keep) {
+            unsigned to = (fDataQHead + w) % kDataQueueLen;
+            if (to != idx) {
+                fDataQ[to] = fDataQ[idx];
+                fDataQUs[to] = fDataQUs[idx];
+                fDataQMc[to] = fDataQMc[idx];
+                fDataQ[idx] = nullptr;
+            }
+            w++;
+        } else {
+            mbuf_freem(m);
+            fDataQ[idx] = nullptr;
+        }
     }
+    fDataQCount = w;
+    if (anyHeld)
+        fAwGateHeld++;
+    resumeOutput();
+}
+
+// Pull model: once our queue has room again, let the stack call outputStart().
+void AirportItlwmAWDLInterface::
+resumeOutput()
+{
+    if (!fOutputStalled || fDataQCount > kDataQueuePull / 2)
+        return;
+    fOutputStalled = false;
+    fOutputResumes++;
+    if (fController && fController->fAWDLBsdIf)
+        fController->fAWDLBsdIf->signalOutputThread();
 }
 
 void AirportItlwmAWDLInterface::
@@ -1856,6 +2565,26 @@ publishDataState()
     setProperty("AWDLDataRx", fDataRx, 64);
     setProperty("AWDLDataRxBad", fDataRxBad, 64);
     setProperty("AWDLDataRxAmsdu", fDataRxAmsdu, 64);
+    setProperty("AWDLDataRxNull", fDataRxNull, 64);
+    {
+        char g[96];
+        snprintf(g, sizeof(g), "on %d held %llu sent %llu", fAwGate ? 1 : 0, fAwGateHeld, fAwGateSent);
+        setProperty("AWDLTxAwGate", g);
+        snprintf(g, sizeof(g), "on %d idle %llu full %llu", fIdleDwell ? 1 : 0, fListenIdle, fListenFull);
+        setProperty("AWDLListenIdleDwell", g);
+        snprintf(g, sizeof(g), "on %d reports %llu last 0x%x", fDataStats ? 1 : 0, fStatsReports, (unsigned)fStatsLastRet);
+        setProperty("AWDLDataStats", g);
+    }
+    setProperty("AWDLDataRxAmsduSub", fDataRxAmsduSub, 64);
+    setProperty("AWDLDataRxHtc", fDataRxHtc, 64);
+    setProperty("AWDLDataRxFrag", fDataRxFrag, 64);
+    if (fDataRxBadHeadLen) {
+        char hex[sizeof(fDataRxBadHead) * 2 + 16];
+        int o = snprintf(hex, sizeof(hex), "%u:", fDataRxBadLen);
+        for (uint8_t i = 0; i < fDataRxBadHeadLen && o + 2 < (int)sizeof(hex); i++)
+            o += snprintf(hex + o, sizeof(hex) - o, "%02x", fDataRxBadHead[i]);
+        setProperty("AWDLDataRxBadLast", hex);
+    }
     setProperty("AWDLDataRxNoBuf", fDataRxNoBuf, 64);
     setProperty("AWDLDataRxLastLen", fDataRxLastLen, 32);
     setProperty("AWDLDataRxLastType", fDataRxLastType, 32);
@@ -1865,6 +2594,13 @@ publishDataState()
     setProperty("AWDLDataTxDeferred", fDataTxDeferred, 64);
     setProperty("AWDLDataTxErr", fDataTxErr, 64);
     setProperty("AWDLDataTxPending", fDataQCount, 32);
+    {
+        char g[96];
+        snprintf(g, sizeof(g), "%s starts %llu (0x%x) stalls %llu resumes %llu",
+                 fController && fController->fAWDLBsdIf && fController->fAWDLBsdIf->fPullModel ? "pull" : "push",
+                 fOutputStarts, (unsigned)fOutputStartRet, fOutputStalls, fOutputResumes);
+        setProperty("AWDLOutputModel", g);
+    }
     setProperty("AWDLDataTxNotCommon", fDataTxNotCommon, 64);
     setProperty("AWDLListenOwn", fListenOwn, 64);
     setProperty("AWDLListenPeerSlots", fListenPeerSlots, 64);
@@ -1933,6 +2669,10 @@ publishTxDiag()
              ic->ic_awdl_tx_ok_band[2], ic->ic_awdl_tx_fail_band[2],
              ic->ic_awdl_tx_ok_band[3], ic->ic_awdl_tx_fail_band[3]);
     setProperty("AWDLTxOkFailByBand", s);
+    snprintf(s, sizeof(s), "%u Mbps step %u (up %u down %u) peer %s caps 0x%x", ic->ic_awdl_tx_rate_mbps,
+             ic->ic_awdl_tx_rate_idx, ic->ic_awdl_tx_rate_up, ic->ic_awdl_tx_rate_down,
+             ether_sprintf(ic->ic_awdl_peer_mac), ic->ic_awdl_peer_caps);
+    setProperty("AWDLDataRate", s);
 }
 
 void AirportItlwmAWDLInterface::
@@ -1940,6 +2680,7 @@ publishTxState()
 {
     publishTxDiag();
     setProperty("AWDLTxPSF", fTxPSF, 64);
+    setProperty("AWDLTxPsfMasterMode3", fTxPsfMasterMode3, 64);
     setProperty("AWDLTxMI", fTxMI, 64);
     setProperty("AWDLTxRefused", fTxRefused, 64);
     setProperty("AWDLTxSkipMode", fTxSkipMode, 64);
@@ -2086,6 +2827,14 @@ createAWDLInterface(apple80211_virt_if_create_data *data)
         return kIOReturnError;
     }
     fAWDLBsdIf = OSDynamicCast(AirportItlwmAWDLEthernetInterface, bsd);
+    // On a real Mac awdl0 is only a Skywalk interface, never an IONetworkInterface, so
+    // SystemConfiguration does not list it as a network port. Ours is an IOEthernetInterface,
+    // which configd would turn into a "Wi-Fi 2" service (DHCP on awdl0, and the service cannot
+    // be removed). "HiddenInterface" is the IORegistry key configd skips in
+    // __SCNetworkInterfaceCopyAll_IONetworkInterface (configd SCNetworkInterface.c,
+    // kSCNetworkInterfaceHiddenInterfaceKey). Set on this object only: configd also searches
+    // parents, so putting it on the controller would hide en0 as well.
+    bsd->setProperty("HiddenInterface", kOSBooleanTrue);
     bsd->registerService();
 
     // The unit is assigned asynchronously by the network stack; awdl0 is the only
@@ -2286,6 +3035,7 @@ init(IO80211Controller *controller, ether_addr *mac, unsigned int role, char con
     fMITmplLen = 0;
     fOOBSets = 0;
     fOOBAutoSets = 0;
+    fTxPsfMasterMode3 = 0;
     fAfTxMode = 0;
     fTxTimer = nullptr;
     fTxChan = 0;
@@ -2293,6 +3043,9 @@ init(IO80211Controller *controller, ether_addr *mac, unsigned int role, char con
     fTxSlotUs = 0;
     fTxSeq = 0;
     fMasterChannel = 0;
+    fSecondaryMasterChannel = 0;
+    fElectionParamsSet = false;
+    memset(fElectionParams, 0, sizeof(fElectionParams));
     fTxPSF = 0;
     fTxMI = 0;
     fTxRefused = 0;
@@ -2302,6 +3055,19 @@ init(IO80211Controller *controller, ether_addr *mac, unsigned int role, char con
     fDataRx = 0;
     fDataRxBad = 0;
     fDataRxAmsdu = 0;
+    fDataRxNull = fDataRxHtc = fDataRxFrag = fDataRxAmsduSub = 0;
+    fAwGateHeld = fAwGateSent = 0;
+    fDataRxUcUs = 0;
+    fDataTxUcUs = 0;
+    bzero(fPeerTl, sizeof(fPeerTl));
+    fPeerTlEvict = fGateSkips = fGateUnknownDst = fGateDstAway = fGateDstAw = 0;
+    fGateMcCached = fGateMcTracked = fPeerSwitchCached = fFollowUntrusted = 0;
+    fListenIdle = fListenFull = 0;
+    fStatsTx = fStatsRx = fStatsReports = 0;
+    fStatsLastRet = 0;
+    fListenNextLeadUs = 0;
+    fDataRxBadLen = 0;
+    fDataRxBadHeadLen = 0;
     fDataRxNoBuf = 0;
     fDataRxLastLen = 0;
     fDataRxLastType = 0;
@@ -2336,6 +3102,22 @@ init(IO80211Controller *controller, ether_addr *mac, unsigned int role, char con
     {
         int v = 0;
         fFollowPeer = PE_parse_boot_argn("-itlawdlfollow", &v, sizeof(v));
+        // On by default; -itlawdlnoawgate restores "send as soon as the dwell runs".
+        fAwGate = !PE_parse_boot_argn("-itlawdlnoawgate", &v, sizeof(v));
+        fTrustRssi = -60;
+        {
+            uint32_t mag = 0;
+            if (PE_parse_boot_argn("itlawdltrustrssi", &mag, sizeof(mag)) && mag >= 30 && mag <= 95)
+                fTrustRssi = -(int)mag;
+        }
+        // Off by default (opt in with -itlawdlidledwell or "awdlctl idledwell on"): it halves
+        // the gateway latency while AWDL idles, but with the dwell reduced to the AW the
+        // firmware's late dwell starts (10-40 ms late in ~20 % of dwells) and the peer
+        // timeline error (up to ~9 ms) make us miss most of what an idle peer sends:
+        // discovery went back to minutes (2026-11-12, build 54617AA1).
+        fIdleDwell = PE_parse_boot_argn("-itlawdlidledwell", &v, sizeof(v));
+        // On by default; -itlawdlnostats keeps the peer manager blind to our traffic.
+        fDataStats = !PE_parse_boot_argn("-itlawdlnostats", &v, sizeof(v));
     }
     memset(&fPeerMaster, 0, sizeof(fPeerMaster));
     memset(&fPeerMac, 0, sizeof(fPeerMac));
@@ -2351,6 +3133,14 @@ init(IO80211Controller *controller, ether_addr *mac, unsigned int role, char con
     fDataRxMc = 0;
     memset(&fDataPeerMac, 0, sizeof(fDataPeerMac));
     fDataPeerUs = 0;
+    memset(&fCachedPeerMac, 0, sizeof(fCachedPeerMac));
+    fCachedPeerUs = 0;
+    fPeerCacheReq = 0;
+    fPeerCacheDataOn = 0;
+    fPeerCacheIfEnabled = 0;
+    fPeerCacheDoneHead = fPeerCacheDoneCount = 0;
+    fPeerCacheCompleted = 0;
+    fPeerActivityStamps = 0;
     fTxReqUs = 0;
     fTxPumpEndUs = 0;
     fTxPumpPsfDone = fTxPumpMiDone = fTxPumpSawRun = false;
@@ -2571,7 +3361,69 @@ setPEER_CACHE_CONTROL(apple80211_peer_cache_control *d)
              r[16], r[17], r[45], r[60]);
     setProperty("AWDLPeerCacheLast", s);
     setProperty("AWDLPeerCacheOps", fPeerCacheOps, 64);
+    // Rates for unicast data to this peer (iwx_awdl_tx_frame): what it announced in the
+    // HT element (+16: id 45, length 26, capabilities, A-MPDU parameters, MCS set from +21)
+    // and the VHT element (+45 present, +46: id, length, capabilities, Rx MCS map at +52).
+    if (op == 0 || op == 6) {
+        ieee80211com *pic = halIc();
+        if (pic) {
+            uint8_t caps = 0;
+            if (r[16] == 45 && r[17] >= 26) {
+                caps |= IEEE80211_AWDL_PEER_HT;
+                if (r[22])
+                    caps |= IEEE80211_AWDL_PEER_HT2;
+                if (r[45]) {
+                    uint16_t map = (uint16_t)(r[52] | (r[53] << 8));
+                    caps |= IEEE80211_AWDL_PEER_VHT;
+                    if (((map >> 2) & 3) != 3) {
+                        caps |= IEEE80211_AWDL_PEER_VHT2;
+                        if (((map >> 2) & 3) >= 1)
+                            caps |= IEEE80211_AWDL_PEER_VHT_M8;
+                    }
+                }
+            }
+            memcpy(pic->ic_awdl_peer_mac, r + 8, IEEE80211_ADDR_LEN);
+            pic->ic_awdl_peer_caps = caps;
+        }
+    }
+    if (op == 0 || op == 6 || op == 2) {
+        uint64_t now = hostUs();
+        if (PeerTl *e = peerTlFind(r + 8, op != 2, now))
+            e->cached = op != 2;
+    }
+    // The family counts the peer as cached (or free again) only when the driver reports the
+    // operation done; see completePeerCacheOps(). Queue it for the next slot tick.
+    if ((op == 0 || op == 6 || op == 2) && fPeerCacheDoneCount < kPeerCacheDoneMax) {
+        unsigned slot = (fPeerCacheDoneHead + fPeerCacheDoneCount) % kPeerCacheDoneMax;
+        fPeerCacheDone[slot].type = op == 2 ? 3 : 1;
+        memcpy(fPeerCacheDone[slot].mac, r + 8, 6);
+        memcpy(&fPeerCacheDone[slot].tail, r + 14, 2);
+        fPeerCacheDoneCount++;
+    }
     return kIOReturnSuccess;
+}
+
+// Completion of setPEER_CACHE_CONTROL, as AppleBCMWLANCore::completePeerCacheControl posts
+// it when the firmware has done the operation: message 0x33, 0x1d0 bytes, +4 = 1 (peer added,
+// opcodes 0 and 6) or 3 (peer deleted, opcode 2), +8 the peer address, +0xe copied from the
+// request. Without it the family's cache count only grew: after eight peers "No space to cache
+// peer ... CPC 8 max 8", cached:0(8), and AWDL went back to the idle rule (B3072F85/DD071138,
+// 2026-11-13: Mac -> iPhone stuck in "waiting").
+void AirportItlwmAWDLInterface::
+completePeerCacheOps()
+{
+    static uint8_t msg[0x1d0];              // work loop only
+    while (fPeerCacheDoneCount) {
+        const PeerCacheDone &d = fPeerCacheDone[fPeerCacheDoneHead];
+        bzero(msg, sizeof(msg));
+        memcpy(msg + 4, &d.type, 4);
+        memcpy(msg + 8, d.mac, 6);
+        memcpy(msg + 14, &d.tail, 2);
+        postMessage(0x33, msg, sizeof(msg), true);
+        fPeerCacheDoneHead = (fPeerCacheDoneHead + 1) % kPeerCacheDoneMax;
+        fPeerCacheDoneCount--;
+        fPeerCacheCompleted++;
+    }
 }
 
 IOReturn AirportItlwmAWDLInterface::
@@ -2711,6 +3563,60 @@ setAWDL_MASTER_CHANNEL(apple80211_awdl_master_channel *d)
     return kIOReturnSuccess;
 }
 
+// APPLE80211_IOC_AWDL_ELECTION_PARAMS, 0x38 bytes. Fields used by
+// AppleBCMWLANProximityInterface (firmware "election tree"): +0x10 flags (8 bit),
+// +0x12 election ID (16), +0x14 distance to the top master (8), +0x16 top master address (6),
+// +0x1c top master metric (32), +0x20 self metric (32). The election itself is run by the
+// family on this driver, so the values it sets are kept and handed back unchanged.
+IOReturn AirportItlwmAWDLInterface::
+setAWDL_ELECTION_PARAMS(apple80211_awdl_election_params *d)
+{
+    fCallCount++;
+    if (!d)
+        return kIOReturnBadArgument;
+    memcpy(fElectionParams, d, sizeof(fElectionParams));
+    fElectionParamsSet = true;
+    return kIOReturnSuccess;
+}
+
+IOReturn AirportItlwmAWDLInterface::
+getAWDL_ELECTION_PARAMS(apple80211_awdl_election_params *d)
+{
+    if (!d || !fElectionParamsSet)
+        return kIOReturnUnsupported;
+    memcpy(d, fElectionParams, sizeof(fElectionParams));
+    return kIOReturnSuccess;
+}
+
+// The family (and wdutil's "Master Channel") reads back what it configured.
+IOReturn AirportItlwmAWDLInterface::
+getAWDL_MASTER_CHANNEL(apple80211_awdl_master_channel *d)
+{
+    if (!d || !fMasterChannel)
+        return kIOReturnUnsupported;
+    d->version = APPLE80211_VERSION;
+    d->master_channel = fMasterChannel;
+    return kIOReturnSuccess;
+}
+
+IOReturn AirportItlwmAWDLInterface::
+setAWDL_SECONDARY_MASTER_CHANNEL(apple80211_awdl_secondary_master_channel *d)
+{
+    fCallCount++;
+    fSecondaryMasterChannel = d ? d->secondary_master_channel : 0;
+    return kIOReturnSuccess;
+}
+
+IOReturn AirportItlwmAWDLInterface::
+getAWDL_SECONDARY_MASTER_CHANNEL(apple80211_awdl_secondary_master_channel *d)
+{
+    if (!d || !fSecondaryMasterChannel)
+        return kIOReturnUnsupported;
+    d->version = APPLE80211_VERSION;
+    d->secondary_master_channel = fSecondaryMasterChannel;
+    return kIOReturnSuccess;
+}
+
 IOReturn AirportItlwmAWDLInterface::
 setAWDL_AF_TX_MODE(apple80211_awdl_af_tx_mode *d)
 {
@@ -2773,11 +3679,8 @@ getAWDL_PRESENCE_MODE(apple80211_awdl_presence_mode *d)
 AWDL_GET_STUB(AWDL_EXTENSION_STATE_MACHINE_PARAMETERS, apple80211_awdl_extension_state_machine_parameter)
 AWDL_GET_STUB(AWDL_ELECTION_ID, apple80211_awdl_election_id)
 AWDL_GET_STUB(AWDL_ELECTION_METRIC, apple80211_awdl_election_metric)
-AWDL_GET_STUB(AWDL_MASTER_CHANNEL, apple80211_awdl_master_channel)
 AWDL_GET_STUB(AWDL_ELECTION_RSSI_THRESHOLDS, apple80211_awdl_election_rssi_thresholds)
-AWDL_GET_STUB(AWDL_ELECTION_PARAMS, apple80211_awdl_election_params)
 AWDL_GET_STUB(AWDL_DEVICE_CAPABILITIES, apple80211_awdl_device_capabilities)
-AWDL_GET_STUB(AWDL_SECONDARY_MASTER_CHANNEL, apple80211_awdl_secondary_master_channel)
 AWDL_GET_STUB(AWDL_AF_TX_MODE, apple80211_awdl_af_tx_mode)
 AWDL_GET_STUB(AWDL_MIN_RATE, apple80211_awdl_min_rate)
 AWDL_GET_STUB(AWDL_ENCRYPTION_TYPE, apple80211_encrypt)
@@ -2796,9 +3699,7 @@ AWDL_SET_STUB(AWDL_EXTENSION_STATE_MACHINE_PARAMETERS, apple80211_awdl_extension
 AWDL_SET_STUB(AWDL_ELECTION_ID, apple80211_awdl_election_id)
 AWDL_SET_STUB(AWDL_ELECTION_METRIC, apple80211_awdl_election_metric)
 AWDL_SET_STUB(AWDL_ELECTION_RSSI_THRESHOLDS, apple80211_awdl_election_rssi_thresholds)
-AWDL_SET_STUB(AWDL_ELECTION_PARAMS, apple80211_awdl_election_params)
 AWDL_SET_STUB(AWDL_PEER_TRAFFIC_REGISTRATION, apple80211_awdl_peer_traffic_registration)
-AWDL_SET_STUB(AWDL_SECONDARY_MASTER_CHANNEL, apple80211_awdl_secondary_master_channel)
 AWDL_SET_STUB(AWDL_MIN_RATE, apple80211_awdl_min_rate)
 AWDL_SET_STUB(AWDL_ENCRYPTION_KEYS, apple80211_key)
 AWDL_SET_STUB(AWDL_ENCRYPTION_TYPE, apple80211_encrypt)

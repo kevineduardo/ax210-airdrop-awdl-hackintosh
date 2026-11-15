@@ -1,3 +1,5 @@
+// Modified by the ax210-airdrop-awdl-hackintosh project, 2026-11 (AWDL/AirDrop on macOS 15
+// Sequoia and 26 Tahoe, and related fixes). See CHANGES-FROM-UPSTREAM.md. License: GPL-2.0.
 //
 //  AirportItlwmSkywalkInterface.cpp
 //  AirportItlwm-Sonoma
@@ -730,6 +732,45 @@ getAP_IE_LIST(struct apple80211_ap_ie_data *data)
     return kIOReturnSuccess;
 }
 
+// APPLE80211_IOC_MAX_NSS_FOR_AP (259): how many spatial streams the radio may use with the
+// current AP (the Broadcom driver reads its Bluetooth-coexistence limit). Layout from
+// AppleBCMWLANCore::getMAX_NSS_FOR_AP: version, then a 32-bit count at +4. This driver never
+// reduces the streams for coexistence, so the answer is what the hardware has.
+struct apple80211_btcoex_max_nss_for_ap_data {
+    uint32_t version;
+    uint32_t max_nss;
+};
+
+IOReturn AirportItlwmSkywalkInterface::
+getMAX_NSS_FOR_AP(apple80211_btcoex_max_nss_for_ap_data *d)
+{
+    if (!d)
+        return kIOReturnBadArgument;
+    d->version = APPLE80211_VERSION;
+    d->max_nss = fHalService->getDriverInfo()->getTxNSS();
+    return kIOReturnSuccess;
+}
+
+// Layout from the 25G332 family: the APPLE80211_IOC_CCA (0x189) handler passes an 8-byte
+// buffer and reads a signed byte at +4 as the percentage.
+struct apple80211_interface_cca_data {
+    uint32_t version;
+    int8_t cca;
+    uint8_t pad[3];
+};
+
+IOReturn AirportItlwmSkywalkInterface::
+getCCA(apple80211_interface_cca_data *cd)
+{
+    struct ieee80211com *ic = fHalService->get80211Controller();
+    int load = fHalService->getDriverInfo()->getChannelLoad();
+    if (!cd || ic->ic_state != IEEE80211_S_RUN || load < 0)
+        return kIOReturnUnsupported;
+    cd->version = APPLE80211_VERSION;
+    cd->cca = (int8_t)load;
+    return kIOReturnSuccess;
+}
+
 IOReturn AirportItlwmSkywalkInterface::
 getNOISE(struct apple80211_noise_data *nd)
 {
@@ -1031,6 +1072,70 @@ getHT_CAPABILITY(apple80211_ht_capability *d)
            sizeof(d->hc_mcsset) : sizeof(ic->ic_sup_mcs));
     if (!d->hc_mcsset[0])
         d->hc_mcsset[0] = 0xff;     /* MCS 0-7 */
+    return kIOReturnSuccess;
+}
+
+// Version, then the VHT Capabilities element as it goes on the air (id 191, length 12,
+// capability info, MCS set): AppleBCMWLANCore::getVHT_CAPABILITY copies 14 bytes to +4.
+IOReturn AirportItlwmSkywalkInterface::
+getVHT_CAPABILITY(apple80211_vht_capability *d)
+{
+    struct ieee80211com *ic = fHalService ? fHalService->get80211Controller() : NULL;
+    if (!d || !ic || !ic->ic_vhtcaps)
+        return kIOReturnUnsupported;
+    static_assert(sizeof(*d) >= 4 + 14, "apple80211_vht_capability holds the element");
+    memset(d, 0, sizeof(*d));
+    d->version = APPLE80211_VERSION;
+    uint8_t ie[16];
+    uint8_t *end = ieee80211_add_vhtcaps(ie, ic);
+    if (end - ie != 14)
+        return kIOReturnUnsupported;
+    memcpy((uint8_t *)d + 4, ie, 14);
+    return kIOReturnSuccess;
+}
+
+// APPLE80211_IOC_HE_CAPABILITY (0x23a), 0x28 bytes. The family keeps the buffer as the local
+// HE capability (IO80211PeerManager::getHeCapabilityIE marks the interface HE capable and the
+// AWDL peer manager advertises it). The layout is inferred, not documented:
+// AppleBCMWLANCore::getHE_CAPABILITY writes bytes at +0x0c..+0x0e and four 16-bit MCS maps
+// (0xfffa, two streams MCS 0-11) from +0x1a, which fits
+//   +0x08 MAC capabilities (6), +0x0e PHY capabilities (11), +0x1a Rx/Tx MCS maps for
+//   80, 160 and 80+80 MHz (6 x 16 bit).
+// Because a wrong guess would put wrong capabilities in the AWDL frames, this answers only
+// with -itlhecap until it has been tested against a peer.
+struct apple80211_he_capability {
+    uint32_t version;
+    uint32_t reserved;
+    uint8_t mac_cap[6];
+    uint8_t phy_cap[11];
+    uint8_t pad;
+    uint16_t mcs[6];
+    uint16_t pad2;
+};
+static_assert(sizeof(struct apple80211_he_capability) == 0x28, "apple80211_he_capability size");
+static_assert(offsetof(struct apple80211_he_capability, phy_cap) == 0x0e, "HE PHY capabilities offset");
+static_assert(offsetof(struct apple80211_he_capability, mcs) == 0x1a, "HE MCS map offset");
+
+IOReturn AirportItlwmSkywalkInterface::
+getHE_CAPABILITY(apple80211_he_capability *d)
+{
+    static int allowed = -1;
+    if (allowed < 0) {
+        int v;
+        allowed = PE_parse_boot_argn("-itlhecap", &v, sizeof(v)) ? 1 : 0;
+    }
+    struct ieee80211com *ic = fHalService ? fHalService->get80211Controller() : NULL;
+    if (allowed != 1 || !d || !ic)
+        return kIOReturnUnsupported;
+    static const uint8_t zero[sizeof(ic->ic_he_cap_elem)] = {};
+    if (!memcmp(&ic->ic_he_cap_elem, zero, sizeof(zero)))
+        return kIOReturnUnsupported;        // no HE on this device
+    memset(d, 0, sizeof(*d));
+    d->version = APPLE80211_VERSION;
+    memcpy(d->mac_cap, ic->ic_he_cap_elem.mac_cap_info, sizeof(d->mac_cap));
+    memcpy(d->phy_cap, ic->ic_he_cap_elem.phy_cap_info, sizeof(d->phy_cap));
+    memcpy(d->mcs, &ic->ic_he_mcs_nss_supp, sizeof(d->mcs) < sizeof(ic->ic_he_mcs_nss_supp) ?
+           sizeof(d->mcs) : sizeof(ic->ic_he_mcs_nss_supp));
     return kIOReturnSuccess;
 }
 
