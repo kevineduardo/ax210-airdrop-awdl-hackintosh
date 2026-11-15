@@ -7,6 +7,7 @@ All notable changes to this project. Versions follow [Semantic Versioning](https
 ### Added
 
 - AWDL build guard (ported from ForbiddenItlwm by retropineaple): AWDL only starts when Apple's `IO80211AWDLProtocol` vtable matches at fixed anchor slots and the running kernel is one we verified (15.8.1 24H32 for the Sequoia kext; 26.7.2 25G332 and 26.7.3 25G342 for the Tahoe kext). On any other build the kext acts as if `-itlawdl` was not set, so normal Wi-Fi keeps working. The result is in the IORegistry property `AWDLBuildGuard`. `-itlawdlanybuild` skips the kernel list (not the vtable check).
+- `scripts/check-compat.sh`: a read-only check to run before and after installing. It reports the macOS build and kernel, the Intel Wi-Fi card, the loaded kexts and `awdl0`, the boot arguments, the BLE advertising-sets log line and the pf/netagent state, with OK/WARN/FAIL lines and a verdict. Exit code 1 when something FAILs.
 
 ## [1.0.0-beta.2] - 2026-11-15
 

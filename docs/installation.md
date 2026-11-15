@@ -4,6 +4,14 @@ This guide assumes you already boot macOS with OpenCore and know how to edit `co
 
 > **Before you start:** copy your working `EFI` folder to a USB stick and make sure you can boot from it. The AWDL code is experimental and a bad combination of kext and macOS build can panic at boot.
 
+## Before you start: run `scripts/check-compat.sh`
+
+```sh
+scripts/check-compat.sh            # add --no-log to skip reading this boot's log
+```
+
+It changes nothing and does not need `sudo`. Before installing it tells you whether your macOS build and Wi-Fi card are the tested ones (Sequoia 15.8.1 or Tahoe 26.7.2, Intel AX210). After installing, run it again: it checks that the kexts are loaded, that `awdl0` is up, that the boot arguments match the tested set, that the BLE advertising-sets patches applied and, on Tahoe, that user-space networking is on. Each line says OK, WARN or FAIL. It exits with 1 when something FAILs. A FAIL for the kexts or `awdl0` is expected before you install.
+
 ## 1. What you need
 
 | Item | Where to get it |
@@ -95,7 +103,7 @@ system_profiler SPAirPortDataType | grep -E 'Firmware Version|Status'
 
 Then, on an iPhone signed in to iCloud (or with AirDrop set to "Everyone for 10 minutes"), open the share sheet and send a photo to the Mac. The first discovery can take 5 to 10 seconds.
 
-If something does not work, run `scripts/collect-diagnostics.sh` and see [troubleshooting.md](troubleshooting.md).
+If something does not work, run `scripts/check-compat.sh` and `scripts/collect-diagnostics.sh` and see [troubleshooting.md](troubleshooting.md).
 
 ## 7. Rollback
 

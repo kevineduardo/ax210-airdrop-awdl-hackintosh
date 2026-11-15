@@ -38,7 +38,7 @@ VERSION=$(pbx --setting MODULE_VERSION)
 DEPLOY=$(pbx --setting MACOSX_DEPLOYMENT_TARGET)
 PLIST=$(pbx --setting INFOPLIST_FILE)
 if [ -z "${GIT_COMMIT:-}" ]; then
-    GIT_COMMIT=_$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+    GIT_COMMIT=-awdl-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
     git diff --quiet HEAD -- . 2>/dev/null || GIT_COMMIT=$GIT_COMMIT-dirty
 fi
 # Read one array element per line (bash 3.2 has no mapfile).

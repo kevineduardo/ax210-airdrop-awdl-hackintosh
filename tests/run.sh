@@ -20,6 +20,7 @@ static() {
     run python3 -I tests/static/check_licenses.py
     if command -v shellcheck >/dev/null 2>&1; then
         run shellcheck -S warning tests/run.sh tools/check-kext.sh scripts/collect-diagnostics.sh \
+            scripts/check-compat.sh tests/unit/test_check_compat.sh \
             scripts/boot-cycles.sh tools/airdrop/airdrop-measure.sh \
             tools/build/build-airportitlwm-clt.sh tools/build/build-bluetoolfixup-clt.sh
     else
@@ -56,6 +57,7 @@ unit() {
     else
         echo "skip AWDL build guard test (no c++ compiler)"
     fi
+    run sh tests/unit/test_check_compat.sh
     if is_macos; then
         tmp=$(mktemp -d) || exit 2
         run cc -std=c11 -Wall -Wextra -Werror -Wno-unused-function -framework IOKit -framework CoreFoundation \
