@@ -10,6 +10,8 @@ This is a fork of [AirportItlwm](https://github.com/OpenIntelWireless/itlwm) (Op
 
 > **Status: experimental beta.** AirDrop works in both directions on the test machine, first on Sequoia 15.8.1 and then on Tahoe 26.7.2. Read [what is tested](#what-works) before you install it, and keep a known-good EFI on a USB stick.
 
+> **Just want fast AirDrop?** Try [ForbiddenItlwm](https://github.com/retropineaple/ForbiddenItlwm) first. It is a separate AirportItlwm fork with its own AWDL port, and today it is ahead of this one: about 20 MB/s in both directions, more macOS builds (Tahoe 26.7.1 to 26.7.3, Sequoia 15.8.x), more Intel cards, Handoff and iMessage tested, and many more testers. This repo is the place for the research notes, the porting guides and the tools, and both projects exchange fixes. On Tahoe, read our [`PowerTimeoutKernelPanic` note](docs/reference/skywalk-pf-quic.md) whichever driver you use.
+
 ## What works
 
 One test machine: AMD Ryzen 5 5600G desktop, Intel AX210 (PCIe, Bluetooth over USB), SMBIOS MacPro7,1, OpenCore 1.0.8. It ran Sequoia 15.8.1 first and Tahoe 26.7.2 later.
@@ -144,6 +146,7 @@ This project is built on other people's work. What we used from each:
 | [acidanthera/MacKernelSDK](https://github.com/acidanthera/MacKernelSDK) | see repo | Kernel headers for building the kexts (build-time dependency, not stored here) |
 | [OpenIntelWireless/IntelBluetoothFirmware](https://github.com/OpenIntelWireless/IntelBluetoothFirmware) | GPL-3.0 | Bluetooth firmware loader and IntelBTPatcher, used at run time (not included) |
 | OpenBSD `iwx(4)` / `net80211`, Linux `iwlwifi` / `iwlmvm` | ISC / BSD / GPL-2.0 | The drivers itlwm was ported from; iwlmvm's P2P-device approach is what our P2P listen copies |
+| [retropineaple/ForbiddenItlwm](https://github.com/retropineaple/ForbiddenItlwm) | GPL-2.0 | The idea and the vtable anchors of the AWDL build guard (AirDrop only starts on verified macOS builds), and the user compatibility checker that `scripts/check-compat.sh` is modeled on |
 | Intel `iwlwifi` firmware | [redistributable](driver/AirportItlwm/iwlwifi-firmware-license) | Firmware bundled in the kext by upstream |
 
 **AI disclosure.** This port was developed by [Kevin Eduardo](https://github.com/kevineduardo) with AI coding assistance from Anthropic's Claude models (Claude Opus 5.5 for most of the work, Claude Fable 5.2 for the panic analysis and the AirDrop failure analysis). Every change was built, checked with the tools in this repo and tested on real hardware before it was kept.
