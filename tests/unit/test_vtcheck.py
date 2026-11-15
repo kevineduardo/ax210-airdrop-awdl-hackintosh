@@ -140,7 +140,7 @@ class CompareTest(unittest.TestCase):
         self.assertEqual(vtcheck.compare(["__ZN3Foo1aEv", "__ZN3Foo1bEv"], ["__ZN7Derived1aEv"], fake_demangle),
                          [(1, "b()", None)])
 
-    @unittest.skipUnless(shutil.which("c++filt"), "c++filt not installed")
+    @unittest.skipUnless(sys.platform == "darwin" and shutil.which("c++filt"), "needs the Apple c++filt (Mach-O underscore prefix)")
     def test_real_demangler(self):
         self.assertEqual(vtcheck.compare(["__ZN3Foo1aEv"], ["__ZN7Derived1cEv"]), [(0, "a()", "c()")])
 
