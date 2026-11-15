@@ -1975,6 +1975,12 @@ extern "C" void _ZN23IO80211VirtualInterface26setPeerManagerDataDisabledEb(IO802
 void AirportItlwmAWDLInterface::
 cacheDataPeer()
 {
+#if !defined(AIRPORT_AWDL_ABI_TAHOE)
+    // Sequoia: the vtable slot, message format or stats layout used here were verified
+    // on Tahoe 25G332 only (IO80211VirtualInterface::findPeer is at 0xcc0 on 15.0.1, not
+    // 0xcd0). Off until checked against a 15.x kernel collection.
+    return;
+#endif
     static int allowed = -1;
     if (allowed < 0) {
         int v;
@@ -2035,6 +2041,12 @@ enum : size_t { kIfFindPeer = 0xcd0 };      // IO80211VirtualInterface::findPeer
 void AirportItlwmAWDLInterface::
 stampDataPeerActivity()
 {
+#if !defined(AIRPORT_AWDL_ABI_TAHOE)
+    // Sequoia: the vtable slot, message format or stats layout used here were verified
+    // on Tahoe 25G332 only (IO80211VirtualInterface::findPeer is at 0xcc0 on 15.0.1, not
+    // 0xcd0). Off until checked against a 15.x kernel collection.
+    return;
+#endif
     if (!fDataPeerUs)
         return;
     uint64_t now = hostUs();
@@ -2061,6 +2073,9 @@ reportDataStats()
     completePeerCacheOps();
     stampDataPeerActivity();
     cacheDataPeer();
+#if !defined(AIRPORT_AWDL_ABI_TAHOE)
+    return;     // updateInterfaceDataStats slot (0xe28) and stats layout: Tahoe 25G332 only
+#endif
     if (!fDataStats || (fDataTx == fStatsTx && fDataRx == fStatsRx))
         return;
     static uint8_t stats[0x800];            // work loop only
@@ -3412,6 +3427,12 @@ setPEER_CACHE_CONTROL(apple80211_peer_cache_control *d)
 void AirportItlwmAWDLInterface::
 completePeerCacheOps()
 {
+#if !defined(AIRPORT_AWDL_ABI_TAHOE)
+    // Sequoia: the vtable slot, message format or stats layout used here were verified
+    // on Tahoe 25G332 only (IO80211VirtualInterface::findPeer is at 0xcc0 on 15.0.1, not
+    // 0xcd0). Off until checked against a 15.x kernel collection.
+    return;
+#endif
     static uint8_t msg[0x1d0];              // work loop only
     while (fPeerCacheDoneCount) {
         const PeerCacheDone &d = fPeerCacheDone[fPeerCacheDoneHead];
