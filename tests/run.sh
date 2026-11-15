@@ -43,6 +43,19 @@ static() {
 
 unit() {
     run python3 -I -m unittest discover -s tests/unit -p 'test_*.py'
+    # AWDL build guard allow-list: the header is freestanding, so this runs on any OS.
+    if command -v c++ >/dev/null 2>&1; then
+        tmp=$(mktemp -d) || exit 2
+        for abi in SEQUOIA TAHOE; do
+            run c++ -std=c++17 -Wall -Wextra -Werror -DAIRPORT_AWDL_ABI_$abi \
+                -I driver/AirportItlwm/AirportItlwm -o "$tmp/test_awdl_build_guard_$abi" \
+                tests/unit/test_awdl_build_guard.cpp
+            [ -x "$tmp/test_awdl_build_guard_$abi" ] && run "$tmp/test_awdl_build_guard_$abi"
+        done
+        rm -rf "$tmp"
+    else
+        echo "skip AWDL build guard test (no c++ compiler)"
+    fi
     if is_macos; then
         tmp=$(mktemp -d) || exit 2
         run cc -std=c11 -Wall -Wextra -Werror -Wno-unused-function -framework IOKit -framework CoreFoundation \

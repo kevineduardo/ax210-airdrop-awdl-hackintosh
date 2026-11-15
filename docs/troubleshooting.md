@@ -46,6 +46,18 @@ Check `sysctl net.filter_state net.link.generic.system.enable_netagent`. If it p
 
 Known issue, cause not found yet. Workaround: `killall sharingd` and open the AirDrop window in Finder.
 
+### `awdl0` never appears after a macOS update
+
+The AWDL build guard only lets AWDL start on macOS builds whose IO80211Family ABI we verified (15.8.1 24H32 for the Sequoia kext; 26.7.2 25G332 and 26.7.3 25G342 for the Tahoe kext). On any other build the kext keeps normal Wi-Fi and acts as if `-itlawdl` was not set. Check its decision:
+
+```sh
+ioreg -l -w0 | grep AWDLBuildGuard
+```
+
+- `verified`: the guard is not the problem; go through the list above.
+- `blocked: unverified macOS kernel`: your kernel (`uname -v`) is not on the list. Wait for a kext that lists it, or, to test at your own risk, add `-itlawdlanybuild` next to `-itlawdl`. Keep `keepsyms=1 debug=0x100` and start with `-itlawdlnoinject` as described under "Kernel panic at boot", and please report the result with your `uname -v` and `sw_vers` output.
+- `blocked: IO80211AWDLProtocol vtable differs`: Apple changed the class this driver subclasses. `-itlawdlanybuild` does not override this; the kext needs to be ported to the new build (see [porting-awdl-to-new-macos-versions.md](porting-awdl-to-new-macos-versions.md)).
+
 ### Kernel panic at boot
 
 1. Boot without `-itlawdl` (OpenCore picker → edit boot-args, or your backup EFI). If it still panics, the problem is not AWDL.

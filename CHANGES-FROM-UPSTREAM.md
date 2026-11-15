@@ -41,6 +41,7 @@ Further changes made while testing on macOS 26.7.2 Tahoe (25G332), 12 to 14 Nove
 | Infra statistics | `AirportItlwmV2.cpp`, `AirportItlwmSkywalkInterface.cpp`, `hal_iwx/*` | Infra packet counters by traffic class and channel load fed to IO80211Family; LQM snapshot with RSSI and CCA; firmware statistics v14 behind `-itlfwstats` |
 | Sequoia safety | `AirportItlwmAWDLInterface.cpp` | The calls that use Tahoe-only vtable slots or message layouts (`findPeer`, `updateInterfaceDataStats`, `cachePeer`, peer-cache completion message 0x33) are compiled out of the Sequoia build |
 | Release logging | `hal_iwx/ItlIwx.cpp` | `iwx_debug` 0 in Release builds |
+| AWDL build guard | `AirportItlwmAWDLBuildGuard.{hpp,cpp}` (new, ported from ForbiddenItlwm's AWDLBuildGuard by retropineaple, GPL-2.0), `AirportItlwmV2.cpp`, `AirportItlwmSkywalkInterface.cpp`, `itlwm.xcodeproj` | AWDL only starts when the `IO80211AWDLProtocol` vtable anchors match and the kernel is on the verified list (`-itlawdlanybuild` skips the list); otherwise the kext behaves as without `-itlawdl`. Result published as `AWDLBuildGuard` |
 | BlueToolFixup | `BrcmPatchRAM/BlueToolFixup.cpp` | Patch table for 26.7.2 (25G332, UUID-gated); `bluetoothd` recognised by vnode identity (path lookup only as a fallback); late start: if Lilu's route arrives after `bluetoothd` started, restart it with its pages evicted so the patches apply; statistics line 30 s after start |
 
 Engineering notes for each change are in [docs/research/](docs/research/) and [docs/test-results-tahoe.md](docs/test-results-tahoe.md).

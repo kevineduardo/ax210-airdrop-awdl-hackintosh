@@ -65,6 +65,8 @@ Some payloads are copied by raw offset (`sync_state`, `channel_sequence`, OOB re
 
 ## 5. Bring it up in stages
 
+The AWDL build guard (`AirportItlwmAWDLBuildGuard.{hpp,cpp}`) keeps AWDL off on a kernel that is not on its verified list, so add `-itlawdlanybuild` for these tests. If `ioreg -l -w0 | grep AWDLBuildGuard` says the `IO80211AWDLProtocol` vtable differs, update the anchor slots in `AirportItlwmAWDLBuildGuard.cpp` from your vtable comparison first. Once the new build works, add its kernel tag (`uname -v`, the `xnu-...` part) and `sw_vers -buildVersion` to the list in `AirportItlwmAWDLBuildGuard.hpp` and to `tests/unit/test_awdl_build_guard.cpp`.
+
 Never test a new ABI with everything on. Use the boot-args in this order, one reboot each, and keep a known-good EFI on a USB stick:
 
 1. `-itlawdl -itlawdlnoinject`: `awdl0` is created, nothing is handed to IO80211Family. Wi-Fi must stay stable.
