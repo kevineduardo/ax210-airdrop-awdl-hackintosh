@@ -2,6 +2,12 @@
 
 All notable changes to this project. Versions follow [Semantic Versioning](https://semver.org/); pre-releases are marked `-beta.N`.
 
+## [Unreleased]
+
+### Added
+
+- `scripts/check-compat.sh`: a read-only check to run before and after installing. It reports the macOS build and kernel, the Intel Wi-Fi card, the loaded kexts and `awdl0`, the boot arguments, the BLE advertising-sets log line and the pf/netagent state, with OK/WARN/FAIL lines and a verdict. Exit code 1 when something FAILs.
+
 ## [1.0.0-beta.2] - 2026-11-15
 
 Adds the work done on macOS 26 Tahoe. Tested with an Intel AX210 on Tahoe 26.7.2 (25G332).

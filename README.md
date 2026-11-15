@@ -67,6 +67,8 @@ The AWDL code lives in the `iwx` HAL, which drives the Intel Wi-Fi 6/6E family: 
    On Tahoe also add `-itlawdlhometx -ibtcompatbeta`, and set `Kernel > Quirks > PowerTimeoutKernelPanic` to `false` in OpenCore.
 4. Reboot, join your Wi-Fi network, open AirDrop on an iPhone and send a photo to the Mac.
 
+Run `scripts/check-compat.sh` before and after installing: it checks your macOS build, card, kexts, boot arguments and network stack without changing anything.
+
 The full guide, including the OpenCore entries and how to check that everything loaded, is in [docs/installation.md](docs/installation.md). Every boot argument is explained in [docs/boot-args.md](docs/boot-args.md).
 
 ## Documentation
@@ -92,6 +94,7 @@ The full guide, including the OpenCore entries and how to check that everything 
 |---|---|
 | [`tools/awdlctl`](tools/awdlctl/awdlctl.c) | Read AWDL counters and change TX switches at run time (A/B tests without a reboot) |
 | [`scripts/monitor-awdl.sh`](scripts/monitor-awdl.sh) | Records counters, logs and an optional pcap during AirDrop tries and writes a per-attempt timeline |
+| [`scripts/check-compat.sh`](scripts/check-compat.sh) | Read-only check of macOS build, card, kexts, boot arguments and network stack, with a verdict |
 | [`scripts/collect-diagnostics.sh`](scripts/collect-diagnostics.sh) | One-shot snapshot for bug reports |
 | [`tools/kc/kcsyms.py`](tools/kc/kcsyms.py) | Lists symbols and decodes C++ vtables from **your own** kernel collection, to check driver headers against the running macOS |
 | [`tools/check-kext.sh`](tools/check-kext.sh) | Post-build checks: struct-layout consistency across compile units, imports present in the kernel |

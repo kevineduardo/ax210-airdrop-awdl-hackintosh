@@ -1,6 +1,14 @@
 # Troubleshooting
 
-## First: collect data
+## First: run the compatibility check
+
+```sh
+scripts/check-compat.sh
+```
+
+It is read-only and prints OK/WARN/FAIL per area (macOS build, card, driver and `awdl0`, boot arguments, Bluetooth and BLE advertising sets, pf/netagent). Fix the FAIL lines first; most of the symptoms below show up there. Its output has no serial numbers, MAC addresses or network names, so you can paste it into an issue.
+
+## Then: collect data
 
 ```sh
 make -C tools/awdlctl                           # once
@@ -62,4 +70,4 @@ Remove `-btlfxadvsets`, reboot, and open an issue with `log show --last boot --p
 
 ## Opening an issue
 
-Use the issue templates. Include: macOS build, card model, CPU/board, OpenCore version, kext versions, `boot-args`, what you did, what happened, and the redacted `summary.md` from `monitor-awdl.sh` if AirDrop is involved.
+Use the issue templates. Include: the output of `scripts/check-compat.sh`, macOS build, card model, CPU/board, OpenCore version, kext versions, `boot-args`, what you did, what happened, and the redacted `summary.md` from `monitor-awdl.sh` if AirDrop is involved.
