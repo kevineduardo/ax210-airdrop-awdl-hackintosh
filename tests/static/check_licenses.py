@@ -11,7 +11,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 OURS = ("tools", "scripts", "tests")
-CODE_EXT = (".c", ".cpp", ".h", ".hpp", ".py", ".sh", ".pl", ".zsh")
+CODE_EXT = (".c", ".cpp", ".h", ".hpp", ".py", ".sh", ".pl", ".zsh", ".swift")
 NOTICE = "ax210-airdrop-awdl-hackintosh project"
 UPSTREAM_IMPORT_SUBJECT = "Import upstream sources unmodified"
 

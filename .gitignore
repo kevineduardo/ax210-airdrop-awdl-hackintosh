@@ -4,6 +4,7 @@ driver/BlueToolFixup/MacKernelSDK/
 driver/BlueToolFixup/Lilu.kext/
 # Build output
 build/
+!/tools/build/
 dist/
 logs/
 DerivedData/

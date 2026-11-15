@@ -19,11 +19,19 @@ static() {
     run python3 -I tests/static/check_boot_args.py
     run python3 -I tests/static/check_licenses.py
     if command -v shellcheck >/dev/null 2>&1; then
-        run shellcheck -S warning tests/run.sh tools/check-kext.sh scripts/collect-diagnostics.sh
+        run shellcheck -S warning tests/run.sh tools/check-kext.sh scripts/collect-diagnostics.sh \
+            scripts/boot-cycles.sh tools/airdrop/airdrop-measure.sh \
+            tools/build/build-airportitlwm-clt.sh tools/build/build-bluetoolfixup-clt.sh
     else
         echo "skip shellcheck (not installed)"
     fi
     if command -v zsh >/dev/null 2>&1; then run zsh -n scripts/monitor-awdl.sh; fi
+    # Swift tools: syntax check only (one file at a time: each is a top-level script).
+    if command -v swiftc >/dev/null 2>&1 && swiftc --version >/dev/null 2>&1; then
+        for f in tools/airdrop/*.swift; do run swiftc -parse "$f"; done
+    else
+        echo "skip swiftc -parse (swiftc not installed)"
+    fi
     run perl -c tools/advsets/verify-advsets.pl
     if is_macos; then
         for p in driver/AirportItlwm/AirportItlwm/WCL/*.plist driver/AirportItlwm/itlwm.xcodeproj/project.pbxproj \

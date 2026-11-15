@@ -28,12 +28,14 @@ FAT_MAGIC = 0xCAFEBABE
 MH_FILESET = 0xC
 LC_SEGMENT_64 = 0x19
 LC_SYMTAB = 0x2
+LC_DYSYMTAB = 0xB
 LC_FILESET_ENTRY = 0x80000035
 N_STAB = 0xE0
 N_TYPE = 0x0E
 N_EXT = 0x01
 N_SECT = 0x0E
 N_UNDF = 0x0
+VM_PROT_EXECUTE = 0x4
 
 
 class MachOError(Exception):
@@ -49,6 +51,9 @@ class Image:
         self.fileoff = fileoff
         self.segments = []   # (name, vmaddr, vmsize, fileoff, filesize)
         self.symbols = []    # (name, type, value)
+        self.exec_ranges = []  # [start, end) of segments mapped executable
+        self.symtab = None     # (symoff, nsyms, stroff, strsize)
+        self.dysymtab = None   # the 18 LC_DYSYMTAB fields
 
 
 def _cstr(buf, off):
@@ -87,16 +92,22 @@ def _parse_image(buf, img):
             segname = buf[p + 8:p + 24].split(b"\0", 1)[0].decode()
             vmaddr, vmsize, fileoff, filesize = struct.unpack_from("<QQQQ", buf, p + 24)
             img.segments.append((segname, vmaddr, vmsize, fileoff, filesize))
+            initprot = struct.unpack_from("<I", buf, p + 60)[0]
+            if initprot & VM_PROT_EXECUTE and vmsize:
+                img.exec_ranges.append((vmaddr, vmaddr + vmsize))
         elif cmd == LC_SYMTAB:
             symoff, nsyms, stroff, strsize = struct.unpack_from("<IIII", buf, p + 8)
             if symoff + nsyms * 16 > len(buf) or stroff + strsize > len(buf):
                 raise MachOError("symbol table of %s outside the file" % img.name)
+            img.symtab = (symoff, nsyms, stroff, strsize)
             strtab = buf[stroff:stroff + strsize]
             for i in range(nsyms):
                 strx, ntype, _sect, _desc, value = struct.unpack_from("<IBBHQ", buf, symoff + 16 * i)
                 if ntype & N_STAB:
                     continue
                 img.symbols.append((_cstr(strtab, strx), ntype, value))
+        elif cmd == LC_DYSYMTAB:
+            img.dysymtab = struct.unpack_from("<18I", buf, p + 8)
 
 
 class KernelCollection:
@@ -154,6 +165,34 @@ class KernelCollection:
                 if vmaddr <= addr < vmaddr + min(vmsize, filesize):
                     return fileoff + (addr - vmaddr)
         return None
+
+    def read(self, addr, size):
+        """Bytes at a virtual address (may be shorter at the end of a segment)."""
+        off = self.vm_to_off(addr)
+        if off is None:
+            raise MachOError("address 0x%x is not backed by file data" % addr)
+        return self.buf[off:off + size]
+
+    def symbol_at_index(self, img, index):
+        """Name of entry INDEX of the image's raw symbol table (stabs included), as
+        used by relocation entries."""
+        if img.symtab is None:
+            raise MachOError("%s has no symbol table" % img.name)
+        symoff, nsyms, stroff, strsize = img.symtab
+        if not 0 <= index < nsyms:
+            raise MachOError("symbol index %d out of range" % index)
+        strx = struct.unpack_from("<I", self.buf, symoff + 16 * index)[0]
+        return _cstr(self.buf[stroff:stroff + strsize], strx)
+
+    def text_symbols(self):
+        """Sorted (address, name) of the defined symbols that lie in executable segments."""
+        out = set()
+        for img in self.images:
+            ranges = img.exec_ranges
+            for name, ntype, value in img.symbols:
+                if (ntype & N_TYPE) == N_SECT and any(lo <= value < hi for lo, hi in ranges):
+                    out.add((value, name))
+        return sorted(out)
 
     def defined(self):
         for img in self.images:
