@@ -211,8 +211,10 @@ Note: the build replaced `build/dd-port/Build/Products/Release/Sequoia/AirportIt
 - Boot-args: the current ones plus **`-itlawdlfollow`**:
 
 ```
--v keepsyms=1 debug=0x100 alcid=1 amfi_get_out_of_my_way=0x1 amfi=0x80 ipc_control_port_options=0 -btlfxadvsets -itlawdl -itlawdlaw -itlawdllisten -itlawdlp2p -itlawdltx -itlawdldata -itlawdlpromisc -itlawdltxpump itlawdllead=30000 -itlawdlfollow
+-v keepsyms=1 debug=0x100 -btlfxadvsets -itlawdl -itlawdlaw -itlawdllisten -itlawdlp2p -itlawdltx -itlawdldata -itlawdlpromisc -itlawdltxpump itlawdllead=30000 -itlawdlfollow
 ```
+
+(Boot-args unrelated to Wi-Fi and Bluetooth are omitted.)
 
 ### 5.2 Procedure
 

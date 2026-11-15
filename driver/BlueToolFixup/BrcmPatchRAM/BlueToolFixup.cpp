@@ -374,7 +374,7 @@ static const uint8_t kAdvSetAddrResendPatched26[] =
 // rel32/disp32 differs. Patterns 1-2 are exact (the slot is the only distinguishing byte);
 // 3-6 are masked (wildcards = 0x00 in find, 0x00 in mask). Each was checked to have exactly one
 // match in the 15.8.1 x86_64 slice, inside a single 4 KiB page
-// (research/verify-advsets.pl).
+// (tools/advsets/verify-advsets.pl).
 // Replace masks only cover the bytes that change, so wildcarded bytes are left as they are.
 // ---------------------------------------------------------------------------------------------
 
@@ -608,7 +608,7 @@ static const AdvSetsTable kAdvSetsTables[] = {
     // Darwin 24.6.x covers 15.6 - 15.8.x; only the 24H32 build is verified (UUID gate).
     { "macOS 15.8.1 (24H32)", KernelVersion::Sequoia, 6, 6, kBluetoothdUuid24H32, kAdvSetsPatches24 },
     // Original crazyhulk table. No UUID recorded for 25E253 yet (fill it in with
-    // research/verify-advsets.pl on a 26.4.1 bluetoothd to make the gate strict there too).
+    // tools/advsets/verify-advsets.pl on a 26.4.1 bluetoothd to make the gate strict there too).
     { "macOS 26.4.1 (25E253)", KernelVersion::Tahoe, 0, 99, nullptr, kAdvSetsPatches26 },
 };
 

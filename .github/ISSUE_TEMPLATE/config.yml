@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/kevineduardo/ax210-airdrop-awdl-hackintosh/security/advisories/new
+    about: Report vulnerabilities privately.
+  - name: General hackintosh help
+    url: https://dortania.github.io/OpenCore-Install-Guide/
+    about: Questions about OpenCore setup that are not about this project.

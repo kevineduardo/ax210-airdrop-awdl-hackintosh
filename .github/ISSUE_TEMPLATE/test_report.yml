@@ -1,0 +1,47 @@
+name: Test report
+description: Tell us how it went on your machine (works or not)
+labels: [test-report]
+body:
+  - type: input
+    id: macos
+    attributes:
+      label: macOS build
+    validations:
+      required: true
+  - type: input
+    id: card
+    attributes:
+      label: Card
+    validations:
+      required: true
+  - type: input
+    id: machine
+    attributes:
+      label: CPU / board / laptop model / SMBIOS
+  - type: input
+    id: kext
+    attributes:
+      label: Release or build used
+    validations:
+      required: true
+  - type: textarea
+    id: bootargs
+    attributes:
+      label: boot-args
+  - type: checkboxes
+    id: results
+    attributes:
+      label: What worked
+      options:
+        - label: Wi-Fi
+        - label: awdl0 created
+        - label: Mac visible in the iPhone's AirDrop list
+        - label: AirDrop iPhone → Mac
+        - label: AirDrop Mac → iPhone
+        - label: AirDrop Mac ↔ Mac
+        - label: Handoff / Universal Clipboard
+        - label: Sleep/wake without problems
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes and diagnostics (redacted)

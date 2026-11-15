@@ -314,7 +314,7 @@ private:
     uint32_t fDataLatHist[8];       // enqueue -> handed to firmware
     uint64_t fDataLatMaxUs;
     uint64_t fDataQUs[256];         // enqueue time of fDataQ[i] (kDataQueueLen)
-    // Peer alignment (see research/AIRDROP-FAILURE-ANALYSIS.md). When we are
+    // Peer alignment (see docs/research/airdrop-master-election-and-multicast.md). When we are
     // the sync master the tracked peer should be on our timeline; these record
     // whether it is, and -itlawdlfollow adopts the peer's timeline when not.
     bool fFollowPeer;               // -itlawdlfollow / AWDLFollowPeerOn

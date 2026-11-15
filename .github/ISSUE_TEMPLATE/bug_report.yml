@@ -1,0 +1,52 @@
+name: Bug report
+description: Something does not work (Wi-Fi, AWDL, AirDrop, Bluetooth, panic)
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please read docs/troubleshooting.md first. Logs contain MAC addresses and device names: redact them before posting.
+  - type: input
+    id: macos
+    attributes:
+      label: macOS build
+      description: Output of `sw_vers` (e.g. 15.8.1 24H32)
+    validations:
+      required: true
+  - type: input
+    id: card
+    attributes:
+      label: Wi-Fi/Bluetooth card
+      description: e.g. Intel AX210 (PCI 8086:2725)
+    validations:
+      required: true
+  - type: input
+    id: machine
+    attributes:
+      label: CPU / board / SMBIOS / OpenCore version
+  - type: input
+    id: kext
+    attributes:
+      label: Kext versions
+      description: Release tag or CI build, and `kmutil showloaded --list-only | grep -iE 'Airport|BlueTool|IntelBluetooth|BTPatcher'`
+    validations:
+      required: true
+  - type: textarea
+    id: bootargs
+    attributes:
+      label: boot-args
+      description: Output of `nvram boot-args`
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Diagnostics
+      description: Output of scripts/collect-diagnostics.sh and, for AirDrop, the summary.md from scripts/monitor-awdl.sh (redacted). For panics, the .panic file.
+      render: text
