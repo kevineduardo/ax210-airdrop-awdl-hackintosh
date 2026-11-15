@@ -45,14 +45,14 @@ Adds the work done on macOS 26 Tahoe. Tested with an Intel AX210 on Tahoe 26.7.2
 
 ## [1.0.0-beta.1] - 2026-11-15
 
-First public release. Experimental: tested with an Intel AX210 on macOS 15.8.1 Sequoia (24H32) and on macOS 26 Tahoe.
+First public release. Experimental: tested with an Intel AX210 on macOS 15.8.1 Sequoia (24H32). For Tahoe, use 1.0.0-beta.2 or later.
 
 ### Downloads
 
 | File | What it is |
 |---|---|
 | `AirportItlwm-AWDL-Sequoia-Release.zip` | Kext for macOS 15.2+ (AWDL verified on 15.8.1). Use this one on Sequoia |
-| `AirportItlwm-AWDL-Tahoe-Release.zip` | Kext for macOS 26 Tahoe, with our fixes. Tested on hardware by the maintainer |
+| `AirportItlwm-AWDL-Tahoe-Release.zip` | Kext for macOS 26 Tahoe. Not tested on hardware; superseded by the Tahoe kext in 1.0.0-beta.2 |
 | `*-Debug.zip` | Verbose builds for bug reports |
 | `*-dSYM.zip` | Debug symbols, to symbolicate panic reports |
 | `BlueToolFixup-advsets-Release.zip` / `-Debug.zip` | BlueToolFixup with BLE advertising sets for 15.8.1 and 26.4.1 (`-btlfxadvsets`) |
