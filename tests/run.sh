@@ -8,6 +8,8 @@
 #   tests/run.sh kext DIR   post-build checks on every AirportItlwm.kext under DIR
 set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
+# Resolve a DIR argument before changing directory.
+if [ "${1:-}" = kext ] && [ -n "${2:-}" ] && [ -d "$2" ]; then kextdir=$(cd "$2" && pwd); else kextdir=${2:-}; fi
 cd "$root" || exit 2
 fail=0
 run() { echo "--- $*"; "$@" || { echo "*** FAILED: $*"; fail=1; }; }
@@ -46,7 +48,7 @@ unit() {
 }
 
 kext() {
-    dir=${1:?usage: tests/run.sh kext <build products dir>}
+    dir=${kextdir:?usage: tests/run.sh kext <build products dir>}
     found=0
     list=$(mktemp) || exit 2
     find "$dir" -name AirportItlwm.kext -type d > "$list"
@@ -62,7 +64,7 @@ case ${1:-all} in
     all) static; unit ;;
     static) static ;;
     unit) unit ;;
-    kext) shift; kext "$@" ;;
+    kext) kext ;;
     *) echo "usage: tests/run.sh [all|static|unit|kext DIR]"; exit 2 ;;
 esac
 [ $fail -eq 0 ] && echo "ALL TESTS PASSED" || echo "SOME TESTS FAILED"

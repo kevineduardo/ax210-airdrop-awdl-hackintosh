@@ -129,7 +129,7 @@ jobs:
         run: |
           set -euo pipefail
           out="$GITHUB_WORKSPACE/dist"; mkdir -p "$out"
-          ditto -c -k --keepParent "build/${{ matrix.configuration }}/BlueToolFixup.kext" \
+          ditto -c -k --keepParent "build/Products/${{ matrix.configuration }}/BlueToolFixup.kext" \
             "$out/BlueToolFixup-advsets-${{ matrix.configuration }}.zip"
       - uses: actions/upload-artifact@v7
         with:
