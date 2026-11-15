@@ -9,6 +9,9 @@
 //
 #include "AirportItlwmV2.hpp"
 #include "AirportItlwmSkywalkInterface.hpp"
+#if defined(AIRPORT_AWDL)
+#include "AirportItlwmAWDLBuildGuard.hpp"
+#endif
 #include <sys/CTimeout.hpp>
 #include <libkern/c++/OSMetaClass.h>
 #include <crypto/sha1.h>
@@ -1049,18 +1052,24 @@ static int convertNodeToScanResult(ItlHalService *fHalService, struct ieee80211_
 // interface when AWDL comes up and copies the 28 bytes after version; its
 // buildEnhDataRateTlv puts everything after hc_id / hc_len into TLV 7 of
 // our PSF and MI frames. Without it peers see "HTorVHT:0" and never cache
-// us for data (seen in iOS logs). Only with -itlawdl, so stock boots are
-// unchanged.
+// us for data (seen in iOS logs). Only with -itlawdl on a build the AWDL
+// build guard allows, so stock boots are unchanged.
 IOReturn AirportItlwmSkywalkInterface::
 getHT_CAPABILITY(apple80211_ht_capability *d)
 {
-    static int awdl = -1;
-    if (awdl < 0) {
+#if defined(AIRPORT_AWDL)
+    const bool awdl = airportAWDLEnabled();
+#else
+    // Sonoma targets build this file without AWDL code and without the build guard.
+    static int awdlArg = -1;
+    if (awdlArg < 0) {
         int v;
-        awdl = PE_parse_boot_argn("-itlawdl", &v, sizeof(v)) ? 1 : 0;
+        awdlArg = PE_parse_boot_argn("-itlawdl", &v, sizeof(v)) ? 1 : 0;
     }
+    const bool awdl = awdlArg == 1;
+#endif
     struct ieee80211com *ic = fHalService ? fHalService->get80211Controller() : NULL;
-    if (awdl != 1 || !d || !ic)
+    if (!awdl || !d || !ic)
         return kIOReturnUnsupported;
     memset(d, 0, sizeof(*d));
     d->version = APPLE80211_VERSION;

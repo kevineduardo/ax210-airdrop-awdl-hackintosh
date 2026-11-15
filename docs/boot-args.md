@@ -26,7 +26,8 @@ While testing, also add `keepsyms=1 debug=0x100` so a kernel panic leaves a read
 
 | Boot argument | Default | What it does |
 |---|---|---|
-| `-itlawdl` | off | Master switch. Announces the AWDL capability to macOS and lets IO80211Family create `awdl0`. Every other switch below needs it. |
+| `-itlawdl` | off | Master switch. Announces the AWDL capability to macOS and lets IO80211Family create `awdl0`. Every other switch below needs it. Only takes effect on a macOS build that passes the AWDL build guard (see `-itlawdlanybuild`). |
+| `-itlawdlanybuild` | off | Lets AWDL start on a kernel that is not on the verified list. Without it, on an unverified kernel the kext behaves as if `-itlawdl` was not set: normal Wi-Fi only. The vtable check still runs and still blocks AWDL if Apple's `IO80211AWDLProtocol` table changed. For testers of a new macOS build who accept the risk of a kernel panic. The guard's decision is in `ioreg -l -w0 \| grep AWDLBuildGuard`. |
 | `-itlawdlaw` | off | Stage 2c: runs the AWDL availability-window (AW) timeline. Without it `awdl0` only receives action frames. |
 | `-itlawdllisten` | off | Stage 2b: leaves the station channel for short listen dwells on the AWDL channel when the station is elsewhere. Also enables the run-time properties used by `awdlctl`. |
 | `-itlawdlp2p` | off | Listens through a dedicated firmware P2P-device MAC (second MAC + PHY context + session protection, like Linux iwlmvm). This is the listen method that works reliably on the AX210. |

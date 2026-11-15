@@ -10,6 +10,9 @@
 
 #include "AirportItlwmV2.hpp"
 #include "AirportItlwmAWDLInterface.hpp"
+#if defined(AIRPORT_AWDL)
+#include "AirportItlwmAWDLBuildGuard.hpp"
+#endif
 #include <sys/_netstat.h>
 #include <crypto/sha1.h>
 #include <net80211/ieee80211_priv.h>
@@ -391,7 +394,10 @@ bool AirportItlwm::start(IOService *provider)
     int he_enabled = 0;
     if (PE_parse_boot_argn("itlwm_he", &he_enabled, sizeof(he_enabled)) && he_enabled == 1)
         fHalService->get80211Controller()->ic_userflags |= IEEE80211_F_HEON;
-    fAWDLEnabled = PE_parse_boot_argn("-itlawdl", &boot_value, sizeof(boot_value));
+    // The build guard runs on every boot so AWDLBuildGuard shows why awdl0 is missing.
+    // A blocked build behaves exactly like a boot without -itlawdl.
+    setProperty("AWDLBuildGuard", airportAWDLBuildStatus());
+    fAWDLEnabled = airportAWDLEnabled();
     if (fAWDLEnabled) {
         XYLog("experimental AWDL enabled\n");
         fHalService->get80211Controller()->ic_vendor_action_handler = awdlActionFrameHandler;
