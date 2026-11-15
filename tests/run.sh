@@ -54,7 +54,7 @@ kext() {
     find "$dir" -name AirportItlwm.kext -type d > "$list"
     while IFS= read -r k; do
         found=1
-        run tools/check-kext.sh "$k"
+        run env NO_KC="${NO_KC:-1}" tools/check-kext.sh "$k"   # CI runner KC is not the target macOS
     done < "$list"
     rm -f "$list"
     [ $found -eq 1 ] || { echo "no AirportItlwm.kext under $dir"; fail=1; }
