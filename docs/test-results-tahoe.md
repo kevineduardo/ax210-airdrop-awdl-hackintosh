@@ -402,6 +402,18 @@ For this machine first: in Portugal, with the AP on channel 100 (DFS), 149 to 16
 
 Results: not run yet.
 
+#### AW-timed sync frames (`-itlawdlawsync`)
+
+| Check | Command or key | Expected |
+|---|---|---|
+| Switch seen | `ITLAWDLCoexAwSync` | `Yes` |
+| Frames | `ITLAWDLCoexAwSyncFrames`, twice 10 s apart with the iPhone idle (screen on, share sheet closed) | rising whenever `ITLAWDLCoexScheduleKnown = Yes`; `ITLAWDLCoexIdleSyncFrames` keeps rising too |
+| Cold discovery | Lock the iPhone for 2 minutes, unlock, open the share sheet; 5 times with and 5 times without the switch | Record the seconds until the Mac appears. Expected: shorter with the switch |
+| Cold connect | First transfer after the Mac appears | Record the time from tapping the Mac to the progress ring starting |
+| CPU (record) | `top -l 5 -stats pid,command,cpu -o cpu \| head -20`, idle | kernel_task share close to phase 2 (the task wakes once per iPhone AW on our channel) |
+
+Results: not run yet.
+
 ## OpenCore requirements for Tahoe
 
 - `Kernel > Quirks > PowerTimeoutKernelPanic = false`. On kernel 25.6 the quirk falls back to replacing the kernel's first `"com.apple\0"` with `"not.apple\0"`, which breaks pf anchor checks, turns off Skywalk's transport agent and breaks QUIC pacing.

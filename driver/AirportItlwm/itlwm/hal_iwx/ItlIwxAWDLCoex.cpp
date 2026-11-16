@@ -171,6 +171,10 @@ static void awdlCoexPublish()
         root->setProperty("ITLAWDLCoexTxRefusedChannel", awdlCoexTxRefusedChannel, 32);
         root->setProperty("ITLAWDLCoexLateCompletions", awdlCoexLateCompletions, 32);
         root->setProperty("ITLAWDLCoexIdleSyncFrames", awdlCoexIdleSyncFrames, 32);
+        if (awdlAwSync) {
+            root->setProperty("ITLAWDLCoexAwSync", true);
+            root->setProperty("ITLAWDLCoexAwSyncFrames", awdlCoexAwSyncFrames, 32);
+        }
         root->setProperty("ITLAWDLCoexStatusIdxHits", awdlCoexStatusIdxHits, 32);
         root->setProperty("ITLAWDLCoexStatusIdxMisses", awdlCoexStatusIdxMisses, 32);
         root->setProperty("ITLAWDLCoexMultiReclaims", awdlCoexMultiReclaims, 32);
@@ -441,6 +445,8 @@ awdlCoexAttach(struct iwx_softc *sc)
     // Phase 3: the receive Block Ack responder. Off by default while the port is tested (ForbiddenItlwm runs
     // it whenever its data mode is on).
     awdlCoexBaRx = PE_parse_boot_argn("-itlawdlcoexba", &dummy, sizeof(dummy));
+    // Phase 5: AW-timed idle sync frames.
+    awdlAwSync = PE_parse_boot_argn("-itlawdlawsync", &dummy, sizeof(dummy));
     // Phase 5: the listener's channel preference (see awdlCoexChanPref). Anything else than 149, 44 or 6 is 0.
     uint32_t chanPref = 0;
     if (PE_parse_boot_argn("itlawdlcoexchan", &chanPref, sizeof(chanPref)) &&
@@ -1489,18 +1495,25 @@ awdlCoexTxTask(void *arg)
         // Setup waits on the firmware; detach or a RUN exit may have come meanwhile.
         // With the data pump the task runs every few milliseconds; sync frames keep their own pace.
         const uint64_t taskNowUS = awdlUptimeUS();
-        // Sync pacing. While data moves, every 100 ms. While idle, every 45 ms (kSyncIdleIntervalUS).
-        // (ForbiddenItlwm's -itlawdlawsync, AW-timed idle sync frames, is a later phase of the port.)
+        // Sync pacing. While data moves, every 100 ms. While idle, every 45 ms (kSyncIdleIntervalUS), and with
+        // -itlawdlawsync also at the start of the iPhone's AWs on our channel, at most one per 8 ms: an idle
+        // iPhone is reliably awake only then.
         const bool coexDataActive = awdlCoexLastDataUS && taskNowUS - awdlCoexLastDataUS < 1000000ULL;
         awdlCoexScheduleCalibrated = awdlCoexScheduleCurrent() && awdlCoexPeerSchedule.calibrated &&
             awdlCoexPeerSchedule.fresh(taskNowUS);
         const uint64_t sinceSync = taskNowUS - awdlCoexLastSyncUS;
-        const bool syncDue = !awdlCoexData ||
+        const bool awTimingUsable = awdlCoexScheduleCurrent() && awdlCoexPeerSchedule.known() &&
+            awdlCoexPeerSchedule.fresh(taskNowUS);
+        const bool awTimed = awdlCoexData && awdlAwSync && !coexDataActive && sinceSync >= kAwdlAwSyncMinGapUS &&
+            awTimingUsable && awdlCoexPeerSchedule.inPresentAwStart(taskNowUS, kAwdlAwSyncWindowUS, false);
+        const bool syncDue = !awdlCoexData || awTimed ||
             sinceSync >= (coexDataActive ? 100000ULL : ItlAWDL::kSyncIdleIntervalUS);
         if (awdlCoexTxStaAdded && !awdlCoexInFlight && !awdlCoexTxHalted && !awdlStopping && awdlCoexAdded &&
             taskNowUS >= awdlCoexTxPauseUntilUS && syncDue) {
             awdlCoexLastSyncUS = taskNowUS;
-            if (awdlCoexData && !coexDataActive)
+            if (awTimed)
+                ++awdlCoexAwSyncFrames;
+            else if (awdlCoexData && !coexDataActive)
                 ++awdlCoexIdleSyncFrames;
             that->awdlCoexTxSend(sc);
         }
@@ -1529,6 +1542,13 @@ awdlCoexTxTask(void *arg)
             nextMS = 1;  // Pausing the iPhone's station: resume as soon as it is back.
         if (awdlCoexGate && awdlCoexGateSinceUS && running && awdlCoexGeneration == sc->sc_generation)
             nextMS = 1;  // Holding for the phone: look again as soon as it may be back.
+        if (awdlAwSync && running && awdlCoexGeneration == sc->sc_generation && awdlCoexData && !dataActive &&
+            awdlCoexScheduleCurrent()) {
+            // Wake for the iPhone's next AW on our channel, not just every 20 ms.
+            const uint64_t untilAW = awdlCoexPeerSchedule.usUntilPresentAw(timerNowUS, false);
+            if (untilAW)
+                nextMS = MIN(nextMS, MAX(1U, unsigned(untilAW / 1000)));
+        }
         timeout_add_msec(&awdlCoexTxTimer, nextMS);
     }
 }

@@ -359,6 +359,12 @@ static uint32_t awdlCoexStuckStreak, awdlCoexTxPauses, awdlCoexWedgedRebuilds;
 static uint32_t awdlCoexDataTx, awdlCoexDataTxErrors, awdlCoexDataOK, awdlCoexDataFailed, awdlCoexDataPumps;
 static uint64_t awdlCoexLastSyncUS;
 static uint32_t awdlCoexIdleSyncFrames;
+// Phase 5: -itlawdlawsync (ForbiddenItlwm's switch). While no data moves, a sync frame also goes at the start
+// of the iPhone's AWs in its entries on our channel, where an idle iPhone is awake, so it finds us sooner. At
+// most one per kAwdlAwSyncMinGapUS, within kAwdlAwSyncWindowUS of the AW start; the task wakes for the next AW.
+static bool awdlAwSync;
+static uint32_t awdlCoexAwSyncFrames;
+constexpr uint64_t kAwdlAwSyncWindowUS = 2000, kAwdlAwSyncMinGapUS = 8000;
 // TX response attribution: the response's status is for the descriptor its header index names; the SSN
 // only says how far to reclaim. Slots reclaimed without their own status are counted, not credited.
 static uint32_t awdlCoexStatusIdxHits, awdlCoexStatusIdxMisses, awdlCoexMultiReclaims, awdlCoexReclaimUnknown,
