@@ -32,6 +32,7 @@
 #include <AWDLCoex/AWDLObservation.hpp>
 #include <AWDLCoex/AWDLProbePolicy.hpp>
 #include <AWDLCoex/AWDLBlockAck.hpp>
+#include <AWDLCoex/AWDLSameChannelProbe.hpp>
 
 // The engine is selected for this boot (ic_awdl_coex_on at attach). Read by the P2P path's guards.
 static bool awdlCoexSelected;
@@ -188,6 +189,81 @@ static uint64_t awdlCoexDelbaDeadlineUS, awdlCoexDelbaNextTryUS;
 static uint64_t awdlCoexBaRxTidLastUS[8];
 static uint32_t awdlCoexBaNonAwdlBssidAccepted, awdlCoexBaNonAwdlBssidApplied, awdlCoexDelbaRxTidRemoved;
 static uint32_t awdlCoexRxVht80TwoStream;
+// Phase 4: send Block Ack (-itlawdlcoexbatx, which turns -itlawdlcoexba on too). The iPhone's station gets
+// a firmware aggregation queue on TID 0 with firmware rate control (VHT80, two streams, MCS 4 to 9 at 80 MHz),
+// and our ADDBA request. Once the iPhone agrees, its payload frames go out as QoS data on that queue and the
+// firmware aggregates them; short exchanges stay on the listener's single-frame queue.
+enum { kCoexBaTxOff, kCoexBaTxAsking, kCoexBaTxAgreed, kCoexBaTxFailed, kCoexBaTxEnabling };
+constexpr uint8_t kAwdlBaTxTid = 0;
+// 40 asks a round, then 20 s of rest: a phone that is mostly away may miss a whole round.
+constexpr uint32_t kAwdlBaTxAsksMax = 40;
+constexpr uint64_t kAwdlBaTxRestUS = 20000000;
+// Asking stops once nothing has gone to or come from the peer for this long and no bulk send runs.
+constexpr uint64_t kAwdlCoexBaIdleAskUS = 30000000;
+constexpr uint32_t kAwdlCoexBaTxQueuedMax = 128;
+static bool awdlCoexBaTxEnabled, awdlCoexBaPeerPauseEnabled;
+static int awdlCoexBaTxQueue = -1, awdlCoexBaTxResetting = -1;
+static int awdlCoexBaTxState = kCoexBaTxOff;
+static uint16_t awdlCoexBaTxSeq;
+static uint8_t awdlCoexBaTxToken = 0x5a;
+static uint32_t awdlCoexBaTxAsks, awdlCoexBaTxAskRounds, awdlCoexBaTxAgreements, awdlCoexBaTxRefusals,
+    awdlCoexBaTxFrames, awdlCoexBaTxSubmitErrors, awdlCoexBaTxNotifs, awdlCoexBaTxAcked, awdlCoexBaTxSentAir,
+    awdlCoexBaTxQueueResult, awdlCoexBaTxDelbas, awdlCoexBaTxPeerAdds;
+static uint64_t awdlCoexBaTxLastAskUS, awdlCoexBaTxRestUntilUS;
+static uint32_t awdlCoexBaTxIdleHolds;
+static ItlAWDL::BaTxBulkState awdlCoexBaTxBulk;
+// The pump is converting a frame for the aggregation queue (no fixed rate: the firmware's rate control picks).
+static bool awdlCoexBaSendingAgg;
+static bool awdlCoexBaQueueAllocPending;
+static uint32_t awdlCoexBaTxAggEnableStatus;
+// The unicast destination of our data and how many payload frames went to it, for picking the TX peer.
+static uint8_t awdlCoexTxDest[6];
+static uint32_t awdlCoexTxDestFrames;
+static uint32_t awdlCoexBaAskOK, awdlCoexBaAskFailed, awdlCoexBaAsksSkippedAway, awdlCoexAskSkipsSinceLast;
+static uint32_t awdlCoexBaTxResponses, awdlCoexBaTxResponseFrames, awdlCoexBaTxAggResponses;
+static uint32_t awdlCoexBaTxPeakQueued, awdlCoexBaTxSinglesWithBacklog, awdlCoexBaTxPausedFullDeferrals;
+static uint32_t awdlCoexBaTxRespOK, awdlCoexBaTxRespFailed, awdlCoexBaTxRespLastFailStatus;
+static uint32_t awdlCoexBaTxVht80TwoStreamNotifs, awdlCoexBaTxPeakReportedFrames, awdlCoexBaTxLastRate;
+static uint64_t awdlCoexBaTxLastAggUS, awdlCoexBaTxLastNotifUS;
+static uint32_t awdlCoexBaEarlyAggFrames;
+// The answer's window (0 until agreed). Under 64 it caps the frames outstanding on the aggregation queue.
+static uint16_t awdlCoexBaTxWindow;
+static uint32_t awdlCoexBaTxSmallWindows, awdlCoexBaTxPolicyRefusals;
+static uint32_t awdlCoexBaTxQueuedCap()
+{
+    return awdlCoexBaTxWindow && awdlCoexBaTxWindow < 64 ? awdlCoexBaTxWindow : kAwdlCoexBaTxQueuedMax;
+}
+// The aggregation queue's owner: listener token, generation and peer epoch, checked again after the
+// firmware answers the queue request, so a stale answer installs nothing.
+struct CoexBaQueueOwner { int generation; uint32_t listener, peer; };
+static bool awdlCoexBaQueueCurrent(int generation, uint32_t listener, uint32_t peer)
+{
+    return awdlCoexAdded && awdlCoexBaPeerAdded &&
+        awdlCoexGeneration == generation && awdlCoexToken == listener && awdlCoexBaPeerEpoch == peer;
+}
+// Rate control for the peer's station (iwx_rs_init): set only while that command is built.
+static bool awdlBaTlc, awdlBaTx80Active;
+static uint32_t awdlBaTxMinMcs = 4;
+// Ordering rule (on unless -itlawdlcoexnoorder): everything unicast to the Block Ack peer takes one path, in
+// order, while its aggregation queue is paused, full or still holds frames, so a short QUIC packet never
+// overtakes held payload on the single-frame queue (QUIC would take that as loss).
+static bool awdlCoexOrder = true;
+static uint32_t awdlCoexOrderViaAgg, awdlCoexOrderSingleBehindAgg, awdlCoexOrderStalled;
+// Peer pause (-itlawdlcoexpeerpause): while aggregate frames move and the iPhone's schedule says it is away,
+// its station's transmit is disabled in the firmware (ADD_STA DISABLE_TX), then enabled again.
+static ItlAWDL::PeerPauseState awdlCoexPeerPause;
+static ItlAWDL::PeerBulkState awdlCoexPeerBulk;
+static uint64_t awdlCoexResumeRetryUS;
+static bool awdlCoexResumePending;
+static uint32_t awdlCoexResumeFailStreak, awdlCoexResumeRetirements, awdlCoexPauseResumeFailures;
+static uint32_t awdlCoexGateQueuedPauses;
+// Probe window: with a receive session open and our ask unanswered, promiscuous receive is opened once for
+// 250 ms per dialog, to see whether the answer arrives then. -itlawdlcoexsamechprobe also opens it while the
+// listener is on the station's own channel (normally never promiscuous there).
+static uint64_t awdlCoexBaProbeUntilUS;
+static bool awdlCoexBaProbeTried;
+static ItlAWDL::SameChannelProbe awdlCoexSameChannelProbe;
+
 // Per-enqueue identity for listener management frames, kept with the slot (see awdlCoexNoteSubmitted).
 static uint16_t awdlCoexMgmtEnqueueId, awdlCoexLastMgmtEnqueueId;
 // Block Ack event log (types as in ForbiddenItlwm: A ask, a ask done, R answer, B BA action to us, Q request,
@@ -326,6 +402,10 @@ static void awdlCoexPublish();
 static void awdlCoexAddrSyncWanted();
 static void awdlCoexNoteSubmitted(struct iwx_softc *, int qid, int idx, const struct ieee80211_frame *);
 static bool awdlCoexOwnsRing(const struct iwx_tx_ring *);
+static bool awdlCoexBaOwnsRing(const struct iwx_tx_ring *);
+static bool awdlCoexRingHoldsRefs(const struct iwx_tx_ring *);
+static void awdlCoexBaTxResponse(const struct iwx_tx_resp *, const struct iwx_tx_ring *);
+static void awdlCoexBaTxNotif(const struct iwx_compressed_ba_notif *);
 static bool awdlVht80TwoStream(uint32_t rate);
 static mbuf_t awdlCoexFrameMbuf(const uint8_t *bytes, size_t length);
 

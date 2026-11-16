@@ -146,6 +146,8 @@
 #ifdef AIRPORT_WCL
 namespace ItlAWDL { struct MccSample; }
 #endif
+/* The AWDL coex backend's aggregation queue owner (ItlIwxAWDLCoex.hpp); unused elsewhere. */
+struct CoexBaQueueOwner;
 
 class ItlIwx : public ItlHalService, ItlDriverInfo, ItlDriverController {
     OSDeclareDefaultStructors(ItlIwx)
@@ -285,7 +287,8 @@ public:
     int    iwx_nic_init(struct iwx_softc *);
     int    iwx_enable_txq(struct iwx_softc *, int, int, int, int);
     int     iwx_tvqm_alloc_txq(struct iwx_softc *, int, int);
-    int     iwx_tvqm_enable_txq(struct iwx_softc *, int, int, uint32_t, int sta_id = IWX_STATION_ID);
+    int     iwx_tvqm_enable_txq(struct iwx_softc *, int, int, uint32_t, int sta_id = IWX_STATION_ID,
+                                const CoexBaQueueOwner *owner = nullptr);
     void    iwx_post_alive(struct iwx_softc *);
     int iwx_send_time_event_cmd(struct iwx_softc *sc,
                             const struct iwx_time_event_cmd *cmd);
@@ -469,6 +472,8 @@ public:
     int    awdlCoexBaAddPeer(struct iwx_softc *, const uint8_t *peer);
     bool   awdlCoexSendMgmt(struct iwx_softc *, const uint8_t *frame, size_t length, uint8_t kind);
     void   awdlCoexBaHandle(struct iwx_softc *);
+    void   awdlCoexBaPauseStep(struct iwx_softc *);
+    void   awdlCoexBaSendStep(struct iwx_softc *, int gen, uint32_t tok, uint64_t now);
     int    awdlCoexTxTeardown(struct iwx_softc *);
     int    awdlCoexTxSetup(struct iwx_softc *);
     void   awdlCoexTxSend(struct iwx_softc *);

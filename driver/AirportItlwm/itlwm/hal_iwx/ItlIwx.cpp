@@ -2863,8 +2863,8 @@ iwx_reset_tx_ring(struct iwx_softc *sc, struct iwx_tx_ring *ring)
         }
         
 #ifdef AIRPORT_WCL
-        /* The coex listener's frames hold a node reference, released on completion; release it here too. */
-        if (data->m != NULL && data->in && awdlCoexOwnsRing(ring)) {
+        /* The coex engine's frames hold a node reference, released on completion; release it here too. */
+        if (data->m != NULL && data->in && awdlCoexRingHoldsRefs(ring)) {
             ieee80211_release_node(&sc->sc_ic, &data->in->in_ni);
             data->in = NULL;
         }
@@ -3650,21 +3650,38 @@ iwx_tvqm_alloc_txq(struct iwx_softc *sc, int tid, int ssn)
 }
 
 int ItlIwx::
-iwx_tvqm_enable_txq(struct iwx_softc *sc, int tid, int ssn, uint32_t size, int sta_id)
+iwx_tvqm_enable_txq(struct iwx_softc *sc, int tid, int ssn, uint32_t size, int sta_id,
+                    const CoexBaQueueOwner *owner)
 {
 #ifdef AIRPORT_VTD
     if (!getMainWorkLoop()->inGate()) {
-        struct Request { iwx_softc *sc; int tid; int ssn; uint32_t size; int sta_id; } request = {sc, tid, ssn, size, sta_id};
+        struct Request {
+            iwx_softc *sc; int tid; int ssn; uint32_t size; int sta_id; const CoexBaQueueOwner *owner;
+        } request = {sc, tid, ssn, size, sta_id, owner};
         return getMainCommandGate()->runAction(
             [](OSObject *, void *arg0, void *arg1, void *, void *) -> IOReturn {
                 auto request = static_cast<Request *>(arg1);
                 return static_cast<ItlIwx *>(arg0)->iwx_tvqm_enable_txq(
-                    request->sc, request->tid, request->ssn, request->size, request->sta_id);
+                    request->sc, request->tid, request->ssn, request->size, request->sta_id, request->owner);
             }, this, &request);
     }
     if (dmaDetaching || !size || size > IWX_MIN_256_BA_QUEUE_SIZE_GEN3 || (size & (size - 1)))
         return -EINVAL;
     uint64_t epoch = dmaEpoch;
+#endif
+#ifdef AIRPORT_WCL
+    /*
+     * AWDL coex backend: the iPhone's aggregation queue is asked for by one owner (generation, listener,
+     * peer station); an answer that comes back for another installs nothing.
+     */
+    const auto ownerCurrent = [&]() {
+        return !owner || (owner->generation == sc->sc_generation &&
+                          awdlCoexBaQueueCurrent(owner->generation, owner->listener, owner->peer));
+    };
+    if (!ownerCurrent())
+        return -ECANCELED;
+#else
+    (void)owner;
 #endif
     int err = -1;
 #ifdef AIRPORT_VTD
@@ -3819,12 +3836,30 @@ iwx_tvqm_enable_txq(struct iwx_softc *sc, int tid, int ssn, uint32_t size, int s
             else if (wr_idx >= getTxQueueSize())
                 awdlCoexQueueStage = "write-pointer";
         }
+        if (awdlCoexBaTxEnabled && owner && sta_id == kAwdlBaStationId && sc->sc_ic.ic_opmode == IEEE80211_M_STA) {
+            /* The iPhone's aggregation queue: a number no host queue uses, like the listener's own. */
+            bool used = fwqid <= 0 || fwqid == IWX_DQA_CMD_QUEUE || fwqid == sc->first_data_qid ||
+                fwqid == awdlCoexOrphanQueue || fwqid == awdlCoexQueue;
+            for (int t = 0; t < int(nitems(sc->sc_tid_data)); ++t)
+                used |= sc->sc_tid_data[t].qid == fwqid;
+            if (used) {
+                err = -EIO;
+                goto fail;
+            }
+            spareCoexSlot = true;
+        }
 #endif
         if ((fwqid <= sc->first_data_qid && !spareCoexSlot) || sc->txq[fwqid].queued ||
             wr_idx >= getTxQueueSize()) {
             err = -EIO;
             goto fail;
         }
+    }
+#endif
+#ifdef AIRPORT_WCL
+    if (!ownerCurrent()) {
+        err = -ECANCELED;
+        goto fail;
     }
 #endif
     ring->cur = wr_idx;
@@ -6250,7 +6285,8 @@ iwx_rx_tx_cmd_single(struct iwx_softc *sc, struct iwx_rx_packet *pkt,
 #ifdef AIRPORT_WCL
         /* The coex listener's frames are AWDL's, not Wi-Fi's: not en0 errors, no antenna move. */
         const bool coexFrame = (awdlCoexQueue >= 0 && tx_resp->tx_queue == awdlCoexQueue) ||
-            (awdlCoexOrphanQueue >= 0 && tx_resp->tx_queue == awdlCoexOrphanQueue);
+            (awdlCoexOrphanQueue >= 0 && tx_resp->tx_queue == awdlCoexOrphanQueue) ||
+            (awdlCoexBaTxQueue >= 0 && tx_resp->tx_queue == awdlCoexBaTxQueue);
         if (coexFrame)
             return;
 #endif
@@ -6401,6 +6437,11 @@ iwx_rx_tx_ba_notif(struct iwx_softc *sc, struct iwx_rx_packet *pkt, struct iwx_r
 
         if (stationNotif)
             sc->sc_tx_timer = 0;
+#ifdef AIRPORT_WCL
+        /* AWDL coex backend: the iPhone's aggregation queue (A-MPDU counters). */
+        if (awdlCoexBaTxQueue >= 0 && int(qid) == awdlCoexBaTxQueue)
+            awdlCoexBaTxNotif(ba_res);
+#endif
 
         iwx_ampdu_txq_advance(sc, ring, IWX_AGG_SSN_TO_TXQ_IDX(le16toh(ba_tfd->tfd_index), ring->ring_count));
         iwx_clear_oactive(sc, ring);
@@ -6470,9 +6511,12 @@ iwx_rx_tx_cmd(struct iwx_softc *sc, struct iwx_rx_packet *pkt,
                     BUS_DMASYNC_POSTREAD);
     
 #ifdef AIRPORT_WCL
-    /* The coex listener's completions say nothing about the station's transmit path. */
+    /* The coex engine's completions say nothing about the station's transmit path. */
     const bool coexQueue = awdlCoexOwnsRing(ring);
-    if (!coexQueue)
+    const bool coexBaQueue = awdlCoexBaOwnsRing(ring);
+    if (coexBaQueue)
+        awdlCoexBaTxResponse(tx_resp, ring);
+    if (!coexQueue && !coexBaQueue)
 #endif
     sc->sc_tx_timer = 0;
 
@@ -7264,6 +7308,9 @@ iwx_tx_fill_cmd(struct iwx_softc *sc, struct iwx_node *in,
 
     *flags = 0;
 #ifdef AIRPORT_WCL
+    /* AWDL coex backend: the iPhone's aggregation queue leaves the rate to the firmware's rate control. */
+    if (awdlCoexBaSendingAgg)
+        return &iwx_rates[IWX_RATE_MCS_7_INDEX];
     /* AWDL coex backend: fixed rates on the listener's queue (its station has no rate table). */
     if (awdlCoexSending) {
         const struct iwx_rate *coexRate = awdlCoexTxRate(sc, in, wh, flags, rate_n_flags, &ridx);
@@ -10712,6 +10759,36 @@ iwx_rs_init(struct iwx_softc *sc, struct iwx_node *in, bool update)
             cfg_cmd.mode, ieee80211_chan_width_name[ni->ni_chw], ni->ni_rx_nss,
             le16toh(cfg_cmd.ht_rates[0][0]), le16toh(cfg_cmd.ht_rates[1][0]),
             le16toh(cfg_cmd.ht_rates[0][1]), le16toh(cfg_cmd.ht_rates[1][1]));
+#ifdef AIRPORT_WCL
+    if (awdlBaTlc) {
+        /*
+         * AWDL coex backend (ForbiddenItlwm): rate control for the iPhone's station. It has no node here.
+         * High rates only: it leaves the channel often, and rate control would otherwise take that for a bad
+         * link and drop far down. HT MCS 4 to 7 at 20 MHz, or VHT MCS 4 to 9 at 80 MHz, one or two streams.
+         */
+        cfg_cmd.mode = IWX_TLC_MNG_MODE_HT;
+        cfg_cmd.ht_rates[IWX_TLC_NSS_1][IWX_TLC_MCS_PER_BW_80] = htole16(0xf0);
+        cfg_cmd.ht_rates[IWX_TLC_NSS_2][IWX_TLC_MCS_PER_BW_80] = htole16(0xf0);
+        cfg_cmd.ht_rates[IWX_TLC_NSS_1][IWX_TLC_MCS_PER_BW_160] = 0;
+        cfg_cmd.ht_rates[IWX_TLC_NSS_2][IWX_TLC_MCS_PER_BW_160] = 0;
+        cfg_cmd.sta_id = kAwdlBaStationId;
+        cfg_cmd.max_ch_width = IWX_TLC_MNG_CH_WIDTH_20MHZ;
+        /* Legacy fallback rates from the listener's band, not the BSS's. */
+        if (awdlCoexOwnChan)
+            cfg_cmd.non_ht_rates = htole16(IEEE80211_IS_CHAN_2GHZ(awdlCoexOwnChan) ? 0xfff : 0xff0);
+        if (awdlBaTx80Active) {
+            cfg_cmd.mode = IWX_TLC_MNG_MODE_VHT;
+            const uint16_t vhtMask = uint16_t(0x3ffU & ~((1U << awdlBaTxMinMcs) - 1U));
+            cfg_cmd.ht_rates[IWX_TLC_NSS_1][IWX_TLC_MCS_PER_BW_80] = htole16(vhtMask);
+            cfg_cmd.ht_rates[IWX_TLC_NSS_2][IWX_TLC_MCS_PER_BW_80] = htole16(vhtMask);
+            cfg_cmd.max_ch_width = IWX_TLC_MNG_CH_WIDTH_80MHZ;
+        }
+        cfg_cmd.chains = iwx_rs_fw_set_active_chains(iwx_fw_valid_tx_ant(sc));
+        cfg_cmd.flags = iwx_rs_fw_get_config_flags(sc);
+        cfg_cmd.sgi_ch_width_supp = (1 << IWX_TLC_MNG_CH_WIDTH_20MHZ);
+        goto send;
+    }
+#endif
     cfg_cmd.sta_id = IWX_STATION_ID;
     cfg_cmd.max_ch_width = update ? iwx_rs_fw_bw_from_sta_bw(ni->ni_chw) : IWX_RATE_MCS_CHAN_WIDTH_20;
     cfg_cmd.chains = iwx_rs_fw_set_active_chains(iwx_fw_valid_tx_ant(sc));
@@ -10732,6 +10809,9 @@ iwx_rs_init(struct iwx_softc *sc, struct iwx_node *in, bool update)
         }
     }
 
+#ifdef AIRPORT_WCL
+send:
+#endif
     cmd_id = iwx_cmd_id(IWX_TLC_MNG_CONFIG_CMD, IWX_DATA_PATH_GROUP, 0);
     cmdver = iwx_lookup_cmd_ver(sc, IWX_DATA_PATH_GROUP, IWX_TLC_MNG_CONFIG_CMD);
     XYLog("%s cmdver %d\n", __FUNCTION__, cmdver);

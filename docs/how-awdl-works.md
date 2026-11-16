@@ -105,7 +105,8 @@ Because both paths use MAC 1, PHY context 1 and firmware station 3, they never r
 - Sync frames come from this driver's own builder (`buildAWDLFrame`): when the listener has a channel, every slot of the channel sequence, the next AW channel and the master channel name it, with op class 128 at 80 MHz. A PSF is left out where the P2P path leaves it out (AF TX mode 3 and not the sync master).
 - `awdl0`'s data is framed by `AirportItlwmAWDLFrame.hpp`, which the P2P path's `flushData` now uses too (same bytes). A host test checks that ForbiddenItlwm's decoder, which guards the listener's queue, accepts it.
 - The receive Block Ack responder is off unless `-itlawdlcoexba` is set; ForbiddenItlwm runs it whenever its data mode is on.
-- The AW-timed idle sync frames (`-itlawdlawsync`), the service-record merge and the transmit side of Block Ack are later phases of the port.
+- Send Block Ack (`-itlawdlcoexbatx`), the peer pause (`-itlawdlcoexpeerpause`) and the same-channel probe window (`-itlawdlcoexsamechprobe`) are off by default, as in ForbiddenItlwm. ForbiddenItlwm's optional refill on reclaim (`-itlawdlcoexbarefill`, no gain measured there), its shared-channel ask switch and its receive-filter hysteresis switch are not ported.
+- The AW-timed idle sync frames (`-itlawdlawsync`) and the service-record merge are later phases of the port.
 
 ### Block Ack
 
@@ -120,6 +121,22 @@ Without Block Ack every AWDL data frame is sent and acknowledged on its own, whi
 From then on the firmware acknowledges the iPhone's A-MPDUs itself. Frames reach `awdl0` in the order they arrive; there is no host reorder buffer, as in ForbiddenItlwm (the order is measured, see `ITLAWDLCoexRxSeq*`). A session ends when the iPhone sends a DELBA, or after 60 s without data on its TID, with our own DELBA (reason 39, confirmed by its acknowledgement, at most 3 tries or 3 s). The iPhone's station goes after 60 s without hearing it, after 10 minutes without data, when the listener moves or is removed, and with every firmware restart.
 
 While a receive session is open, the listener's MAC context drops promiscuous receive: the firmware does not acknowledge a session's frames with it on. A listener only gets group data in promiscuous mode, so mDNS multicast is not received while a session is open. Promiscuous receive comes back when the last session ends.
+
+**Send (`-itlawdlcoexbatx`).** Sending in A-MPDUs needs the iPhone's agreement and a firmware queue that aggregates:
+
+1. The trigger is the iPhone acknowledging our receive answer, or a bulk stream (200 payload frames of 1200 bytes or more in a second, 50 in a quarter second once agreed) to a peer heard on our channel; the iPhone's station is added for it if receive Block Ack has not done so yet.
+2. The station gets a firmware aggregation queue on TID 0 (`SCD_QUEUE_CFG` for station 3). The firmware hands out a number no host queue owns; the request carries its owner (generation, listener, peer station), and an answer that comes back after any of them changed installs nothing.
+3. The firmware's rate control (`TLC_MNG_CONFIG_CMD` for station 3) gets high rates only: VHT MCS 4 to 9, one or two streams, at 80 MHz when the listener is at 80 MHz, else HT MCS 4 to 7 at 20 MHz. The iPhone leaves our channel often, and rate control would otherwise read that as a bad link.
+4. Our ADDBA request (TID 0, window 64, start sequence from the queue) goes out from the listener's queue at most every 200 ms, never while the iPhone's schedule says it is away, 40 per round, then 20 s of rest; asking pauses after 30 s without traffic.
+5. When the iPhone agrees, TID 0 is enabled for aggregation on its station (`ADD_STA` with `TID_DISABLE_TX`). A window under 64 in its answer caps the frames outstanding.
+
+From then on the data pump converts payload frames for the iPhone into QoS data on TID 0 with our own sequence numbers and puts them on the aggregation queue, without a fixed rate. The firmware builds the A-MPDUs and reports each Block Ack (`BA_NOTIF`); those notifications, which the driver used to drop for any station but en0's, now reclaim the queue after every record is checked.
+
+**Send gate and peer pause.** Outside an aggregated bulk send, the phase 2 send gate holds frames for the iPhone while its schedule says it is away or dozing. During a bulk send the gate stands aside and, with `-itlawdlcoexpeerpause`, the firmware is told to stop sending to the iPhone's station (`DISABLE_TX`) while the schedule says it is away, then to start again; frames already queued wait in the firmware instead of being retried into empty air. A resume is confirmed with the firmware's status and retried every 50 ms; after 5 failures the station is removed.
+
+**Ordering rule.** While the aggregation queue is paused, full or still draining, every unicast frame for the iPhone waits behind it, short ones included (`-itlawdlcoexnoorder` turns this off). Otherwise a short QUIC packet could overtake held payload on the single-frame queue, and QUIC takes three packets acknowledged ahead of one as a loss.
+
+**Probe window.** With a receive session open, promiscuous receive is off, and on some setups the iPhone's answer to our request then never arrives. Once per dialog, after three unanswered asks, promiscuous receive is opened for 250 ms. On en0's own channel that only happens with `-itlawdlcoexsamechprobe`.
 
 ### Safety rules kept from ForbiddenItlwm
 
@@ -137,6 +154,7 @@ While a receive session is open, the listener's MAC context drops promiscuous re
 | 1 | The listener: its own PHY context and binding on 149 at 80 MHz (or 6 at 20 MHz, or en0's channel), country answers (`MCC_UPDATE_CMD`) and channel moves, receive of AWDL action and data frames into `awdl0` (data only from peers heard on our channel in the last 60 s), promiscuous isolation so the station never sees the listener's frames. No transmit |
 | 2 | Transmit: the listener's own firmware station (2) and queue, macOS's sync frames (MI and PSF alternating, every 45 ms idle and 100 ms during data, built by the AWDL interface with all 16 slots on the listener's channel), `awdl0`'s data pulled one frame at a time (`ic_awdl_coex_pop`) with fixed rates (6 Mbit/s group, 24 Mbit/s, then HT MCS 4, 5, 7, then VHT80 2SS MCS 4 and 7) and a rate ladder fed by the TX responses, the stuck-frame watchdog, and the send gate that holds frames for the iPhone while its schedule says it is away or dozing |
 | 3 | Receive Block Ack (`-itlawdlcoexba`): ADDBA answers, the iPhone's station and firmware session, DELBA and idle teardown, promiscuous receive off while a session is open, arrival-order counters |
+| 4 | Send Block Ack and A-MPDU (`-itlawdlcoexbatx`): aggregation queue on TID 0, firmware rate control at VHT80 two streams, our ADDBA request, QoS conversion in the data pump, Block Ack notifications counted, peer pause (`-itlawdlcoexpeerpause`), ordering rule, probe window |
 
 Hardware checks per phase: [test-results-tahoe.md](test-results-tahoe.md#coex-backend-to-test-on-hardware).
 

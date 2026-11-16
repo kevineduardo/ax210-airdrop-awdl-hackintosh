@@ -353,6 +353,32 @@ The iPhone can now send to the Mac in A-MPDUs. Test with a 12 MB photo and a 60 
 
 Results: not run yet.
 
+### Phase 4: send Block Ack and A-MPDU (Set B plus `-itlawdlcoexba -itlawdlcoexbatx -itlawdlcoexpeerpause`)
+
+Mac to iPhone in A-MPDUs. Test with a 12 MB photo and a 60 MB video, Mac to iPhone, twice: with the iPhone on the home AP (channel 100), and with the iPhone's Wi-Fi off. Then A/B: the same set without `-itlawdlcoexpeerpause`, and the same set plus `-itlawdlcoexnoorder`. Run `ioreg -lw0 -r -c AirportItlwm -d1 | grep -E 'ITLAWDLCoex(BaTx|BaAsk|Peer|Order|GateQueued)'` right after each transfer.
+
+| Check | Command or key | Expected |
+|---|---|---|
+| Switches seen | `ITLAWDLCoexBaTxEnabled`, `ITLAWDLCoexPeerPauseEnabled`, `ITLAWDLCoexOrder` | `Yes`, `Yes`, `Yes` |
+| Agreement | `ITLAWDLCoexBaTxStateName` | `"asking"` before the first transfer, `"agreed"` during it. `"failed"`: read `ITLAWDLCoexBaTxQueueResult` and `ITLAWDLCoexBaTxAggEnableStatus` |
+| Asks | `ITLAWDLCoexBaTxAsks`, `ITLAWDLCoexBaTxAgreements`, `ITLAWDLCoexBaTxRefusals`, `ITLAWDLCoexBaAskOK` | agreement within a few asks; refusals 0; `BaAskOK` 1 or more |
+| Queue | `ITLAWDLCoexBaTxQueueResult` | a queue number (not `0x8000....` or `0x4000....`) |
+| Aggregation enabled | `ITLAWDLCoexBaTxAggEnableStatus` | status bits 0 (success) |
+| Frames on the queue | `ITLAWDLCoexBaTxFrames`, `ITLAWDLCoexBaTxNotifs` | both rising during the transfer; `ITLAWDLCoexBaTxSubmitErrors` 0 |
+| A-MPDU proof | `ITLAWDLCoexBaTxSentAir` divided by `ITLAWDLCoexBaTxNotifs`; `ITLAWDLCoexBaTxPeakReportedFrames` | well above 1 (frames per Block Ack); peak 16 or more |
+| Acknowledged | `ITLAWDLCoexBaTxAcked` divided by `ITLAWDLCoexBaTxSentAir` | above 90 % |
+| Rate | `ITLAWDLCoexBaTxVht80TwoStreamNotifs` compared with `ITLAWDLCoexBaTxNotifs`; `ITLAWDLCoexBaTxLastRate` | most notifications at VHT 80 MHz two streams. `LastRate`: bits 8 to 10 are the format (3 = VHT), bits 11 to 13 the width (2 = 80 MHz), bit 4 set for two streams |
+| Peer pause | `ITLAWDLCoexPeerPauses`, `ITLAWDLCoexPeerForcedResumes`, `ITLAWDLCoexPauseResumeFailures`, `ITLAWDLCoexResumeRetirements` | pauses above 0 when the iPhone's schedule has away entries, forced resumes few, failures 0, retirements 0 |
+| Ordering | `ITLAWDLCoexOrderSingleBehindAgg`, `ITLAWDLCoexOrderViaAgg` | single-behind near 0; via-agg rising. With `-itlawdlcoexnoorder`, single-behind rises |
+| Reclaim | `ITLAWDLCoexReclaimRefused` | 0 |
+| Single responses on the queue | `ITLAWDLCoexBaTxRespFailed` compared with `ITLAWDLCoexBaTxRespOK` | failures small |
+| Speed, Mac to iPhone | `tools/airdrop/airdrop-measure.sh` (12 MB and 60 MB) | 5 times the 1.0.0-beta.2 speed (about 1 MB/s) or more, steady over 60 MB. Target 15 MB/s with the iPhone on a quiet channel; ForbiddenItlwm reports 21 to 26 MB/s on an AX211 when the iPhone's schedule allows it, and about 15 MB/s with 11 of 16 slots on our channel. Record MB/s per run |
+| Speed, iPhone to Mac | same tool, 60 MB | No slower than phase 3 |
+| en0 during a transfer | `ping -c 30 <gateway>` while sending 60 MB | Wi-Fi keeps working; record the loss and the time |
+| Errors | `ITLAWDLCoexBaBroken`, `ITLAWDLCoexTeardownErrors`, `ITLAWDLCoexTxHalted`, kernel log | `No`, `0`, `No`, no firmware errors |
+
+Results: not run yet.
+
 ## OpenCore requirements for Tahoe
 
 - `Kernel > Quirks > PowerTimeoutKernelPanic = false`. On kernel 25.6 the quirk falls back to replacing the kernel's first `"com.apple\0"` with `"not.apple\0"`, which breaks pf anchor checks, turns off Skywalk's transport agent and breaks QUIC pacing.
