@@ -443,6 +443,22 @@ Results: not run yet.
 
 The plan adds one only if phase 3's arrival-order counters show a need (`ITLAWDLCoexRxSeqOutOfOrder` above about 1 % of `ITLAWDLCoexRxSeqFrames` during a transfer, or iPhone to Mac transfers that stall while `ITLAWDLCoexRxSeqMaxBehind` is large). Record those numbers in phase 3; the buffer will be written after that.
 
+### Phase 6: soak before any default changes (best set from phases 4 and 5)
+
+Nothing changes by default until these pass. Watch `ITLAWDLCoexAddsAfterRestart`, `ITLAWDLCoexTeardownErrors`, `ITLAWDLCoexBroken`, `ITLAWDLCoexBaBroken`, `ITLAWDLCoexOrphanQueue` and the kernel log for firmware errors throughout.
+
+| Check | How | Expected |
+|---|---|---|
+| Transfers | 10 transfers of 60 MB each way | All complete; record the slowest and fastest MB/s each way. Targets: iPhone to Mac 5 MB/s or more (phase 3), Mac to iPhone 5 MB/s or more and steady (phase 4); goal 15 MB/s or more both ways on 149 or 44 at 80 MHz |
+| Wi-Fi off/on | 20 times with the listener up | No panic; `ITLAWDLCoexAdds` rises by one per association; `TeardownErrors` 0; `OrphanQueue` stays `0xffffffff` |
+| Roaming | Switch between two SSIDs (or bands) 5 times | The listener comes back each time; no stale `ITLAWDLCoexBaPeerAdded` |
+| Firmware restart during a transfer | Toggle Wi-Fi off and on quickly during a 60 MB transfer, 3 times | No panic; `AddsAfterRestart` rises; the next transfer works |
+| Idle | 24 hours with `-itlawdlcoex` and an iPhone nearby, no AirDrop | No panic, no firmware error; `ITLAWDLCoexBaPeerAdded = No` after the idle timeouts; record kernel_task CPU |
+| Wi-Fi throughput | `networkQuality -s` with the best set and with Set A | Record both (ForbiddenItlwm reports 30 to 45 % less en0 throughput while the listener runs) |
+| Other devices | Handoff, Universal Clipboard and a second Apple device's AirDrop during and after transfers | Record what works |
+
+Results: not run yet.
+
 ## OpenCore requirements for Tahoe
 
 - `Kernel > Quirks > PowerTimeoutKernelPanic = false`. On kernel 25.6 the quirk falls back to replacing the kernel's first `"com.apple\0"` with `"not.apple\0"`, which breaks pf anchor checks, turns off Skywalk's transport agent and breaks QUIC pacing.

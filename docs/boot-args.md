@@ -93,6 +93,24 @@ The port lands in phases. What each phase does is listed in [test-results-tahoe.
 
 The counters are on the controller: `ioreg -lw0 -r -c AirportItlwm -d1 | grep -E 'AWDLBackend|ITLAWDLCoex'`.
 
+### Coex backend: test sets
+
+The coex backend is not part of the recommended sets above yet. Every switch below stays off by default until it has been tested on hardware; the defaults will only change after that (see [test-results-tahoe.md](test-results-tahoe.md#coex-backend-to-test-on-hardware)). Each set is the recommended Tahoe set plus the switches listed; compare each one with the set before it (A/B).
+
+| Set | Adds | Tests |
+|---|---|---|
+| B | `-itlawdlcoex` | Phase 2: listener, sync frames, single-frame data, send gate |
+| B3 | `-itlawdlcoex -itlawdlcoexba` | Phase 3: iPhone to Mac in A-MPDUs |
+| B4 | `-itlawdlcoex -itlawdlcoexba -itlawdlcoexbatx -itlawdlcoexpeerpause` | Phase 4: Mac to iPhone in A-MPDUs, peer pause |
+| B4 without the pause | B4 without `-itlawdlcoexpeerpause` | the pause's effect |
+| B4 without ordering | B4 plus `-itlawdlcoexnoorder` | the ordering rule's effect |
+| B5 channel | B4 plus `itlawdlcoexchan=149` (or `=44`) | 44 at 80 MHz where 149 is not usable |
+| B5 sync | B4 plus `-itlawdlawsync` | faster discovery of an idle iPhone |
+| B5 records | B4 plus `-itlawdlsvcmerge` | service records seen sooner |
+| B5 trace | any set plus `-itlawdlcoexbatrace` | diagnostics for a bug report |
+
+What would become the default once the soak passes (not yet): receive Block Ack and the peer pause on with `-itlawdlcoex`, with a new switch to turn receive Block Ack off; send Block Ack on if it holds up over the soak.
+
 ## AirportItlwm: other switches (inherited from upstream)
 
 | Boot argument | What it does |

@@ -164,6 +164,8 @@ The listener's channel is picked from the firmware's own channel map, after the 
 | 4 | Send Block Ack and A-MPDU (`-itlawdlcoexbatx`): aggregation queue on TID 0, firmware rate control at VHT80 two streams, our ADDBA request, QoS conversion in the data pump, Block Ack notifications counted, peer pause (`-itlawdlcoexpeerpause`), ordering rule, probe window |
 | 5 | Optional, each off by default: 44 at 80 MHz as a fallback or first choice (`itlawdlcoexchan=`), AW-timed idle sync frames (`-itlawdlawsync`), service-record merge on receive (`-itlawdlsvcmerge`), Block Ack diagnostics (`-itlawdlcoexbatrace`). A host reorder buffer waits for phase 3's arrival-order numbers |
 
+Phase 6 is hardening: a soak on hardware, and only after it a decision on defaults (receive Block Ack and the peer pause on with `-itlawdlcoex`, send Block Ack if it holds up). Until then every switch of phases 3 to 5 stays off unless set; the test sets are listed in [boot-args.md](boot-args.md#coex-backend-test-sets).
+
 Hardware checks per phase: [test-results-tahoe.md](test-results-tahoe.md#coex-backend-to-test-on-hardware).
 
 ## The availability-window timeline
