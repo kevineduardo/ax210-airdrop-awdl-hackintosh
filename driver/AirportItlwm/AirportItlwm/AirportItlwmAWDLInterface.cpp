@@ -491,6 +491,19 @@ inputActionFrame(const uint8_t *frame, size_t len, const ieee80211_rxinfo *rxi)
     bool firstOnChan = (*chanCount)++ == 0;
     // A frame on a social channel is rare and is the result 2b is looking for.
     bool socialChan = chanCount != &fRxAFChanOther;
+    {
+        // The coex backend hears its channel all the time, so "a frame on a social channel" is every
+        // frame: publish at most once a second there (the P2P path is unchanged).
+        static uint64_t coexLastPublishUs;
+        ieee80211com *cic = halIc();
+        if (socialChan && cic && cic->ic_awdl_coex_on) {
+            const uint64_t nowUs = hostUs();
+            if (nowUs - coexLastPublishUs < 1000000)
+                socialChan = false;
+            else
+                coexLastPublishUs = nowUs;
+        }
+    }
     // XYLog goes to kprintf, so publish progress where ioreg can see it.
     if (firstOnChan || socialChan || fRxAF <= 8 || (fRxAF & 0xf) == 0) {
         publishListenState();

@@ -92,8 +92,16 @@ Because both paths use MAC 1, PHY context 1 and firmware station 3, they never r
 |---|---|
 | Engine (HAL) | `itlwm/hal_iwx/ItlIwxAWDLCoex.hpp` (state) and `ItlIwxAWDLCoex.cpp` (functions). ItlIwx.cpp includes both, so the engine shares its statics; hooks in `iwx_tx`, `iwx_rx_frame`, `iwx_rx_tx_cmd` and friends are one-line calls under `#ifdef AIRPORT_WCL` |
 | Pure helpers | `include/AWDLCoex/*.hpp` (frame parsers and builders, peer schedule, regulatory, Block Ack), copied from ForbiddenItlwm, host-tested in `tests/unit/awdlcoex/` |
+| Hooks | End of `iwx_run` (add the listener), RUN exit in `iwx_newstate_task` (remove it), `iwx_mcc_update` (country notice), `iwx_rx_mpdu_mq` and `iwx_rx_frame` (receive), `iwx_get_channel_width`, `iwx_get_ctrl_pos` and `iwx_phy_ctxt_cmd` (the listener's 80 MHz PHY context) |
 | Seam to the AWDL interface | `ic_awdl_coex_*` in `ieee80211_var.h`: the HAL writes the listener's channel, width and op class; the AWDL interface provides the pull callbacks |
 | Beacon hints | `ieee80211_input.c` marks channels where an AP beacons on its own channel (`ic_beacon_hint`) |
+
+### Differences from ForbiddenItlwm
+
+- Received frames go to `awdl0` through the existing `ic_vendor_action_handler` and `ic_awdl_data_handler`, without the four FCS bytes ForbiddenItlwm adds. Data frames are not required to pass ForbiddenItlwm's IPv6 decoder, because `awdl0`'s input path here also takes QoS data and A-MSDU subframes; the decoder only counts (`ITLAWDLCoexDataRxNotIPv6`).
+- The listener's address is `awdl0`'s address (`ic_awdl_addr`) from the start, instead of being learned from the first sync frame macOS builds. A change is applied to the firmware from the engine's task.
+- The first PHY command for the listener's own channel removes and adds PHY context 1 when the band changes (it was added on channel 1 at firmware start and nothing binds it yet). The P2P path found that band changes need this on the AX210. ForbiddenItlwm sends MODIFY. Later moves (`awdlCoexRetarget`) keep ForbiddenItlwm's MODIFY.
+- Counters are published on the AirportItlwm controller, not on the registry root.
 
 ### Safety rules kept from ForbiddenItlwm
 
@@ -108,6 +116,7 @@ Because both paths use MAC 1, PHY context 1 and firmware station 3, they never r
 | Phase | What it adds |
 |---|---|
 | 0 | Backend selection, P2P path off, firmware capabilities published (`ITLAWDLCoexFw*`), beacon hints, helpers and host tests, two HAL fixes (Block Ack notifications for other firmware stations are reclaimed; `iwx_flush_sta_tids` no longer reads past `sc_tid_data`) |
+| 1 | The listener: its own PHY context and binding on 149 at 80 MHz (or 6 at 20 MHz, or en0's channel), country answers (`MCC_UPDATE_CMD`) and channel moves, receive of AWDL action and data frames into `awdl0` (data only from peers heard on our channel in the last 60 s), promiscuous isolation so the station never sees the listener's frames. No transmit |
 
 Hardware checks per phase: [test-results-tahoe.md](test-results-tahoe.md#coex-backend-to-test-on-hardware).
 

@@ -285,6 +285,28 @@ Nothing is sent from a listener yet. AirDrop is not expected to work with Set B.
 
 Results: not run yet.
 
+### Phase 1: listener and receive (Set B)
+
+Before the boot: unlock the iPhone, set AirDrop to Everyone for 10 minutes, and open the AirDrop window in Finder. The Mac still does not send AWDL frames in this phase, so it does not appear on the iPhone.
+
+| Check | Command | Expected |
+|---|---|---|
+| Listener added | `ioreg -lw0 -r -c AirportItlwm -d1 \| grep -E 'ITLAWDLCoex(Added\|Adds\|MultiState)'` | `ITLAWDLCoexAdded = Yes` while en0 is associated; `ITLAWDLCoexMultiState = "own-channel"` (not `no-dynamic-quota`, `phy-uncertain`, `fallback-same`) |
+| Firmware commands | `ioreg -lw0 -r -c AirportItlwm -d1 \| grep -E 'ITLAWDLCoex(Mac\|Bind\|MultiBind\|Phy)Result'` | `1` each |
+| Channel | `ioreg -lw0 -r -c AirportItlwm -d1 \| grep -E 'ITLAWDLCoex(Channel\|OwnWidth)'` | `149` / `80` is the goal. `6` / `20` means 149 to 161 are passive or not allowed at 80 MHz: then record `ITLAWDLCoexCountryAnswers`, `ITLAWDLCoexCountryLearned`, `ITLAWDLCoexCountryLastStatus` and `ITLAWDLCoexBeaconHints` (bits 0 to 3 are 149, 153, 157, 161; bit 4 is 6) |
+| Country | `ioreg -lw0 -r -c AirportItlwm -d1 \| grep ITLAWDLCoexCountry` | `ITLAWDLCoexCountryNotices` and `ITLAWDLCoexCountryAnswers` 1 or more after association; `ITLAWDLCoexCountryFailures` 0. en0 must stay associated through the first answer (no deauth in `log show --last 5m --predicate 'process == "kernel"'`) |
+| Receive | `ioreg -lw0 -r -c AirportItlwm -d1 \| grep -E 'ITLAWDLCoex(AwdlAction\|ActionOnChannel\|ActionOffChannel\|Forwarded\|ForwardMalformed\|ForwardRefused)'`, twice, 10 s apart | `ITLAWDLCoexAwdlAction` rising by several per second with the iPhone awake nearby; `ActionOnChannel` much larger than `ActionOffChannel`; `Forwarded` follows `AwdlAction`; `ForwardMalformed` under 1 % |
+| Promiscuous | `ioreg -lw0 -r -c AirportItlwm -d1 \| grep ITLAWDLCoexPromisc` | `ITLAWDLCoexPromiscLive = Yes` (en0 is on channel 100, the listener elsewhere); `ITLAWDLCoexPromiscUncertain = No` |
+| Errors | `ioreg -lw0 -r -c AirportItlwm -d1 \| grep -E 'ITLAWDLCoex(TeardownErrors\|Broken)'` | `0` / `No` |
+| On `awdl0` | `ioreg -lw0 -r -c AirportItlwmAWDLInterface -d1 \| grep -E 'AWDLRxFrames\|AWDLRxChan149\|AWDLRxChan6\|AWDLRxGap\|AWDLPeers'` | `AWDLRxFrames` rising all the time; `AWDLRxChan149` (or `AWDLRxChan6` on the fallback) carries almost all of them; the largest gap per peer in `AWDLRxGap` well under 1000 ms; `AWDLPeers` lists the iPhone |
+| macOS sees the peer | `/usr/bin/log show --last 2m --predicate 'process == "wifip2pd" OR process == "sharingd"'` | The iPhone's AWDL peer is added, with a plausible RSSI in dBm |
+| Wi-Fi off/on | Wi-Fi menu off/on 5 times | No panic; `ITLAWDLCoexAdds` rises by one per association; `ITLAWDLCoexTeardownErrors` stays 0 |
+| Wi-Fi cost (record only) | `networkQuality -s` with Set B, then with Set A | Record both. ForbiddenItlwm reports 30 to 45 % less en0 throughput while the listener runs |
+
+Risk to watch in this phase: if the listener moves between 6 and 149 while running (`ITLAWDLCoexMoves` rises), check the kernel log for firmware errors. That move is a PHY MODIFY across bands on a bound context, which ForbiddenItlwm's notes say can crash the firmware. To force it, boot with the AP's country unknown to the card (first boot after an NVRAM reset) and watch `ITLAWDLCoexChannel` go from 6 to 149 when the country is learned.
+
+Results: not run yet.
+
 ## OpenCore requirements for Tahoe
 
 - `Kernel > Quirks > PowerTimeoutKernelPanic = false`. On kernel 25.6 the quirk falls back to replacing the kernel's first `"com.apple\0"` with `"not.apple\0"`, which breaks pf anchor checks, turns off Skywalk's transport agent and breaks QUIC pacing.

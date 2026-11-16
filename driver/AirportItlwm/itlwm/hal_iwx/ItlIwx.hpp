@@ -143,6 +143,10 @@
 #include <HAL/ItlDriverInfo.hpp>
 #include <HAL/ItlDriverController.hpp>
 
+#ifdef AIRPORT_WCL
+namespace ItlAWDL { struct MccSample; }
+#endif
+
 class ItlIwx : public ItlHalService, ItlDriverInfo, ItlDriverController {
     OSDeclareDefaultStructors(ItlIwx)
     
@@ -451,6 +455,20 @@ public:
     /* AWDL coex backend (ItlIwxAWDLCoex.cpp, ported from ForbiddenItlwm). */
     void   awdlCoexAttach(struct iwx_softc *);
     void   awdlCoexPublishFirmware(struct iwx_softc *);
+    static void awdlCoexTxTimeout(void *);
+    static void awdlCoexTxTask(void *);
+    int    awdlCoexListener(struct iwx_softc *, bool add);
+    int    awdlCoexMacSend(struct iwx_softc *, uint32_t action);
+    int    awdlCoexOwnPhy(struct iwx_softc *, struct iwx_phy_ctxt *, struct ieee80211_channel *, uint8_t width);
+    void   awdlCoexMccNotice(struct iwx_softc *, struct iwx_mcc_chub_notif *);
+    void   awdlCoexCountryAnswer(struct iwx_softc *);
+    void   awdlCoexRetarget(struct iwx_softc *);
+    void   awdlCoexAddrApply(struct iwx_softc *);
+    int    awdlCoexBaRemovePeer(struct iwx_softc *);
+    int    awdlCoexTxTeardown(struct iwx_softc *);
+    bool   awdlCoexRxHook(struct iwx_softc *, mbuf_t, int chanidx, bool chanValid, int rate_n_flags,
+                          struct ieee80211_rxinfo *);
+    int    iwx_mcc_request(struct iwx_softc *, uint16_t country, uint8_t source, ItlAWDL::MccSample *, bool apply);
 #endif
     void iwx_rs_update(struct iwx_softc *sc, struct iwx_tlc_update_notif *notif);
     int    iwx_enable_mgmt_queue(struct iwx_softc *);

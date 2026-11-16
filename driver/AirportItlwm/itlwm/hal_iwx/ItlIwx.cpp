@@ -5481,9 +5481,17 @@ iwx_rx_frame(struct iwx_softc *sc, mbuf_t m, int chanidx,
     struct ieee80211_node *ni;
     struct _ifnet *ifp = IC2IFP(ic);
     
+#ifdef AIRPORT_WCL
+    // Whether the firmware's channel is real, before a stand-in replaces it (AWDL coex backend).
+    const bool chanValid = chanidx > 0 && chanidx < int(nitems(ic->ic_channels));
+#endif
     if (chanidx < 0 || chanidx >= nitems(ic->ic_channels))
         chanidx = ieee80211_chan2ieee(ic, ic->ic_ibss_chan);
     
+#ifdef AIRPORT_WCL
+    if (awdlCoexProbe && awdlCoexRxHook(sc, m, chanidx, chanValid, rate_n_flags, rxi))
+        return;
+#endif
     wh = mtod(m, struct ieee80211_frame *);
     ni = ieee80211_find_rxnode(ic, wh);
     if ((rxi->rxi_flags & IEEE80211_RXI_HWDEC) &&
@@ -6160,9 +6168,17 @@ iwx_rx_mpdu_mq(struct iwx_softc *sc, mbuf_t m, void *pktdata,
                        rate_n_flags, device_timestamp, &rxi, ml))
         return;
     
+#ifdef AIRPORT_WCL
+    /* AWDL coex backend: which MAC contexts the firmware delivered this frame for. */
+    awdlRxMacMaskValid = sc->sc_device_family >= IWX_DEVICE_FAMILY_AX210;
+    awdlRxMacMask = awdlRxMacMaskValid ? desc->v3.mac_context : 0;
+#endif
     iwx_rx_frame(sc, m, chanidx, le16toh(desc->status),
                  (phy_info & IWX_RX_MPDU_PHY_SHORT_PREAMBLE),
                  rate_n_flags, device_timestamp, &rxi, ml);
+#ifdef AIRPORT_WCL
+    awdlRxMacMaskValid = false;
+#endif
 }
 
 void ItlIwx::
@@ -6587,6 +6603,11 @@ static uint8_t
 iwx_get_channel_width(struct ieee80211com *ic, struct ieee80211_channel *c)
 {
     uint8_t ret = IWX_PHY_VHT_CHANNEL_MODE20;
+#ifdef AIRPORT_WCL
+    /* AWDL coex backend: the listener's own PHY context, only while its own command is built. */
+    if (awdlCoexPhyWidth >= 0 && awdlCoexMulti && awdlPhyBuildingId == kAwdlCoexPhyId)
+        return uint8_t(awdlCoexPhyWidth);
+#endif
     if (ic->ic_bss == NULL || ic->ic_state < IEEE80211_S_ASSOC) {
         return ret;
     }
@@ -6609,6 +6630,18 @@ iwx_get_channel_width(struct ieee80211com *ic, struct ieee80211_channel *c)
 static uint8_t
 iwx_get_ctrl_pos(struct ieee80211com *ic, struct ieee80211_channel *c)
 {
+#ifdef AIRPORT_WCL
+    // The coex listener's own context at 80 MHz is only ever in 149-161, centred on 155.
+    if (awdlCoexPhyWidth == IWX_PHY_VHT_CHANNEL_MODE80 && awdlCoexMulti && awdlPhyBuildingId == kAwdlCoexPhyId) {
+        switch (ieee80211_chan2ieee(ic, c)) {
+            case 149: return IWX_PHY_VHT_CTRL_POS_2_BELOW;
+            case 153: return IWX_PHY_VHT_CTRL_POS_1_BELOW;
+            case 157: return IWX_PHY_VHT_CTRL_POS_1_ABOVE;
+            case 161: return IWX_PHY_VHT_CTRL_POS_2_ABOVE;
+            default: break;
+        }
+    }
+#endif
     if (ic->ic_bss == NULL || ic->ic_state < IEEE80211_S_ASSOC || iwx_get_channel_width(ic, c) == IWX_PHY_VHT_CHANNEL_MODE20)
         return IWX_PHY_VHT_CTRL_POS_1_BELOW;
 
@@ -6752,6 +6785,9 @@ iwx_phy_ctxt_cmd(struct iwx_softc *sc, struct iwx_phy_ctxt *ctxt,
                  uint32_t apply_time)
 {
     XYLog("%s\n", __FUNCTION__);
+#ifdef AIRPORT_WCL
+    awdlPhyBuildingId = ctxt ? int(ctxt->id) : -1;
+#endif
     struct ieee80211com *ic = &sc->sc_ic;
     struct iwx_phy_context_cmd_v1 cmd;
     uint8_t active_cnt, idle_cnt;
@@ -8817,6 +8853,12 @@ iwx_mcc_update(struct iwx_softc *sc, struct iwx_mcc_chub_notif *notif)
 {
    struct ieee80211com *ic = &sc->sc_ic;
    struct _ifnet *ifp = IC2IFP(ic);
+
+#ifdef AIRPORT_WCL
+    /* AWDL coex backend: the notice is answered from its task (MCC_UPDATE_CMD needs a reply). */
+    if (awdlCoexProbe)
+        awdlCoexMccNotice(sc, notif);
+#endif
 
     snprintf(sc->sc_fw_mcc, sizeof(sc->sc_fw_mcc), "%c%c",
              (le16toh(notif->mcc) & 0xff00) >> 8, le16toh(notif->mcc) & 0xff);
@@ -11126,6 +11168,11 @@ iwx_run(struct iwx_softc *sc)
               DEVNAME(sc), err);
         return err;
     }
+#ifdef AIRPORT_WCL
+    // AWDL coex listener. Its failure is recorded, never passed on: Wi-Fi carries on without it.
+    if (awdlCoexProbe)
+        (void)awdlCoexListener(sc, true);
+#endif
     return 0;
 }
 
@@ -11349,6 +11396,10 @@ iwx_newstate_task(void *psc)
     if (nstate <= ostate) {
         switch (ostate) {
             case IEEE80211_S_RUN:
+#ifdef AIRPORT_WCL
+                if (awdlCoexProbe)
+                    (void)that->awdlCoexListener(sc, false);
+#endif
                 err = that->iwx_run_stop(sc);
                 if (err)
                     goto out;

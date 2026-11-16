@@ -75,7 +75,9 @@ The port lands in phases. What each phase does is listed in [test-results-tahoe.
 
 | Boot argument | Default | What it does |
 |---|---|---|
-| `-itlawdlcoex` | off | Selects the coex backend. Needs `-itlawdl` and a build that passes the AWDL build guard. Phase 0: selects the backend, turns the P2P path off and publishes the firmware's capabilities (`ITLAWDLCoexFw*` on the AirportItlwm controller); no listener yet, so AirDrop does not work in this mode. The choice is shown as `AWDLBackend` (`coex`, `p2p`, `scan` or `none`). |
+| `-itlawdlcoex` | off | Selects the coex backend. Needs `-itlawdl` and a build that passes the AWDL build guard. While en0 is associated, a listener context runs on its own channel (149 at 80 MHz when the firmware allows all of 149 to 161, else 6 at 20 MHz, else en0's channel), answers the firmware's country notice and hands every AWDL action and data frame it hears to `awdl0`. Phase 1: receive only, so the Mac is not discoverable over AWDL and AirDrop does not work yet. The choice is shown as `AWDLBackend` (`coex`, `p2p`, `scan` or `none`). |
+| `-itlawdlcoexshared` | off | With `-itlawdlcoex`: never give the listener its own channel; it shares en0's channel and binding (ForbiddenItlwm without its multi-channel switch). For A/B tests only. Refused when en0 is on a DFS channel, because the listener could never send there. |
+| `-itlawdlsameband` | off | With `-itlawdlcoex`: while en0 is on 2.4 GHz, keep the listener on channel 6 instead of 149, so the radio does not switch bands (ForbiddenItlwm's switch of the same name). |
 
 The counters are on the controller: `ioreg -lw0 -r -c AirportItlwm -d1 | grep -E 'AWDLBackend|ITLAWDLCoex'`.
 
