@@ -73,7 +73,7 @@ jobs:
             -jobs 3 ARCHS=x86_64 SYMROOT="$PWD/build/products" OBJROOT="$PWD/build/obj" \
             DEBUG_INFORMATION_FORMAT=dwarf-with-dsym CODE_SIGNING_ALLOWED=NO \
             GIT_COMMIT="-awdl-$(git rev-parse --short HEAD)" \
-            build > "logs/build.log" 2>&1 || { tail -150 logs/build.log; exit 1; }
+            build > "logs/build.log" 2>&1 || { grep -E -A4 '(fatal )?error:' logs/build.log | head -120; tail -60 logs/build.log; exit 1; }
           grep -E 'warning:' logs/build.log | sort -u | tail -40 || true
       - name: Post-build checks
         run: ../../tests/run.sh kext "build/products/${{ matrix.configuration }}/${{ matrix.platform }}"
