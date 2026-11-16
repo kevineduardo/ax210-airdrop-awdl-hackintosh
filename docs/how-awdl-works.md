@@ -162,7 +162,7 @@ The listener's channel is picked from the firmware's own channel map, after the 
 | 2 | Transmit: the listener's own firmware station (2) and queue, macOS's sync frames (MI and PSF alternating, every 45 ms idle and 100 ms during data, built by the AWDL interface with all 16 slots on the listener's channel), `awdl0`'s data pulled one frame at a time (`ic_awdl_coex_pop`) with fixed rates (6 Mbit/s group, 24 Mbit/s, then HT MCS 4, 5, 7, then VHT80 2SS MCS 4 and 7) and a rate ladder fed by the TX responses, the stuck-frame watchdog, and the send gate that holds frames for the iPhone while its schedule says it is away or dozing |
 | 3 | Receive Block Ack (`-itlawdlcoexba`): ADDBA answers, the iPhone's station and firmware session, DELBA and idle teardown, promiscuous receive off while a session is open, arrival-order counters |
 | 4 | Send Block Ack and A-MPDU (`-itlawdlcoexbatx`): aggregation queue on TID 0, firmware rate control at VHT80 two streams, our ADDBA request, QoS conversion in the data pump, Block Ack notifications counted, peer pause (`-itlawdlcoexpeerpause`), ordering rule, probe window |
-| 5 | Optional, each off by default: 44 at 80 MHz as a fallback or first choice (`itlawdlcoexchan=`), AW-timed idle sync frames (`-itlawdlawsync`), service-record merge on receive (`-itlawdlsvcmerge`) |
+| 5 | Optional, each off by default: 44 at 80 MHz as a fallback or first choice (`itlawdlcoexchan=`), AW-timed idle sync frames (`-itlawdlawsync`), service-record merge on receive (`-itlawdlsvcmerge`), Block Ack diagnostics (`-itlawdlcoexbatrace`). A host reorder buffer waits for phase 3's arrival-order numbers |
 
 Hardware checks per phase: [test-results-tahoe.md](test-results-tahoe.md#coex-backend-to-test-on-hardware).
 

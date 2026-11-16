@@ -426,6 +426,23 @@ Results: not run yet.
 
 Results: not run yet.
 
+#### Block Ack diagnostics (`-itlawdlcoexbatrace`)
+
+Use this set when a phase 3 or 4 check fails, and attach the output to the report.
+
+| Check | Command or key | Expected |
+|---|---|---|
+| Switch seen | `ITLAWDLCoexBaTrace` | `Yes` |
+| Event log | `ioreg -lw0 -r -c AirportItlwm -d1 \| grep -A140 ITLAWDLCoexBaEvents` | Rows such as `Q` (iPhone's request), `q ... 1` (our answer acknowledged), `A` (our ask), `R ... 1` (its answer matched), `S 1 4` then `S 4 2` (asking, enabling, agreed) |
+| Notification trace | `ITLAWDLCoexBaTraceEntries`; save `ITLAWDLBaTrace` with `ioreg -a -r -c AirportItlwm -d1 > batrace.plist` | entries rising during a Mac to iPhone transfer, up to 4096 |
+| awdl0 backlog | `ITLAWDLCoexAwdlQueued` during a transfer | how many frames wait in `awdl0`'s queue; near 0 means macOS feeds slower than the radio sends |
+
+Results: not run yet.
+
+#### Host reorder buffer for receive Block Ack: not added
+
+The plan adds one only if phase 3's arrival-order counters show a need (`ITLAWDLCoexRxSeqOutOfOrder` above about 1 % of `ITLAWDLCoexRxSeqFrames` during a transfer, or iPhone to Mac transfers that stall while `ITLAWDLCoexRxSeqMaxBehind` is large). Record those numbers in phase 3; the buffer will be written after that.
+
 ## OpenCore requirements for Tahoe
 
 - `Kernel > Quirks > PowerTimeoutKernelPanic = false`. On kernel 25.6 the quirk falls back to replacing the kernel's first `"com.apple\0"` with `"not.apple\0"`, which breaks pf anchor checks, turns off Skywalk's transport agent and breaks QUIC pacing.

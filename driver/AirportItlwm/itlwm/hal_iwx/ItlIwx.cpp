@@ -6438,12 +6438,18 @@ iwx_rx_tx_ba_notif(struct iwx_softc *sc, struct iwx_rx_packet *pkt, struct iwx_r
         if (stationNotif)
             sc->sc_tx_timer = 0;
 #ifdef AIRPORT_WCL
-        /* AWDL coex backend: the iPhone's aggregation queue (A-MPDU counters). */
-        if (awdlCoexBaTxQueue >= 0 && int(qid) == awdlCoexBaTxQueue)
+        /* AWDL coex backend: the iPhone's aggregation queue (A-MPDU counters, optional trace). */
+        const bool coexBaQueue = awdlCoexBaTxQueue >= 0 && int(qid) == awdlCoexBaTxQueue;
+        const int coexQueuedBefore = ring->queued;
+        if (coexBaQueue)
             awdlCoexBaTxNotif(ba_res);
 #endif
 
         iwx_ampdu_txq_advance(sc, ring, IWX_AGG_SSN_TO_TXQ_IDX(le16toh(ba_tfd->tfd_index), ring->ring_count));
+#ifdef AIRPORT_WCL
+        if (coexBaQueue)
+            awdlCoexBaTxTraceNote(ba_res, coexQueuedBefore, ring->queued);
+#endif
         iwx_clear_oactive(sc, ring);
     }
 }

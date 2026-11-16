@@ -15,6 +15,7 @@ All notable changes to this project. Versions follow [Semantic Versioning](https
 - AWDL coex backend, phase 5: `itlawdlcoexchan=` lets the listener use 44 at 80 MHz (36 to 48) where 149 to 161 are not usable, as a fallback (`149`) or first choice (`44`). Off by default. Beacon hints now also cover an AP at 80 MHz centred on 42.
 - AWDL coex backend, phase 5: `-itlawdlawsync` also sends an idle sync frame at the start of each of the iPhone's AWs on the listener's channel, so an idle iPhone finds the Mac sooner. Off by default.
 - AWDL coex backend, phase 5: `-itlawdlsvcmerge` adds the iPhone's cached service records a received sync frame lacks before it reaches `awdl0`. Off by default.
+- AWDL coex backend, phase 5: `-itlawdlcoexbatrace` publishes the Block Ack event log and a trace of the first 4096 Block Ack notifications of the iPhone's aggregation queue, for bug reports. Off by default.
 - `scripts/check-compat.sh`: a read-only check to run before and after installing. It reports the macOS build and kernel, the Intel Wi-Fi card, the loaded kexts and `awdl0`, the boot arguments, the BLE advertising-sets log line and the pf/netagent state, with OK/WARN/FAIL lines and a verdict. Exit code 1 when something FAILs.
 
 ### Fixed

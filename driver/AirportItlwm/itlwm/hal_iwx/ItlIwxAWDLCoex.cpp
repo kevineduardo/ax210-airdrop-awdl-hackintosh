@@ -50,6 +50,45 @@ static void awdlCoexShareChannel()
         awdlCoexWideBlock(awdlFixedChannel) && awdlFixedChannel == awdlCoexChannel ? 128 : 0;
 }
 
+// -itlawdlcoexbatrace: the Block Ack event log as text, one row per event: "index ms type a b c d id". The
+// first 64 of the boot and the newest 128; a reader removes the overlap by index. Event types are listed at
+// AwdlCoexBaEvent. And the Block Ack notification trace, every 256 new entries until it is full.
+static void awdlCoexPublishBaTrace(IOEthernetController *root)
+{
+    static char text[128 * 56], first[64 * 56];
+    const uint32_t total = awdlCoexBaEventCount;
+    auto dump = [](char *out, size_t cap, uint32_t from, uint32_t to, const AwdlCoexBaEvent *ring, uint32_t ringSize) {
+        size_t used = 0;
+        out[0] = 0;
+        for (uint32_t i = from; i < to && used + 56 <= cap; ++i) {
+            const auto &e = ring[i % ringSize];
+            const int n = snprintf(out + used, cap - used, "%u %u %c %u %u %u %u %u\n", i, e.ms, e.type, e.a, e.b,
+                                   e.c, e.d, e.id);
+            if (n <= 0)
+                break;
+            used += size_t(n) < cap - used ? size_t(n) : cap - used - 1;
+        }
+    };
+    dump(text, sizeof(text), total > 128 ? total - 128 : 0, total, awdlCoexBaEvents, nitems(awdlCoexBaEvents));
+    dump(first, sizeof(first), 0, total < 64 ? total : 64, awdlCoexBaEventsFirst, nitems(awdlCoexBaEventsFirst));
+    root->setProperty("ITLAWDLCoexBaTrace", true);
+    root->setProperty("ITLAWDLCoexBaEvents", text);
+    root->setProperty("ITLAWDLCoexBaEventsFirst", first);
+    root->setProperty("ITLAWDLCoexBaTraceEntries", awdlCoexBaTrace.count, 32);
+    root->setProperty("ITLAWDLCoexStatusIdxHits", awdlCoexStatusIdxHits, 32);
+    root->setProperty("ITLAWDLCoexAwdlQueued",
+                      awdlCoexIc && awdlCoexIc->ic_awdl_coex_queued ? awdlCoexIc->ic_awdl_coex_queued(awdlCoexIc) : 0U, 32);
+    if (awdlCoexBaTrace.count != awdlCoexBaTracePublished &&
+        (awdlCoexBaTrace.full() || awdlCoexBaTrace.count >= awdlCoexBaTracePublished + 256)) {
+        const size_t size = offsetof(ItlAWDL::BaTrace, entries) + awdlCoexBaTrace.count * sizeof(ItlAWDL::BaTraceEntry);
+        if (auto *trace = OSData::withBytes(&awdlCoexBaTrace, unsigned(size))) {
+            root->setProperty("ITLAWDLBaTrace", trace);
+            awdlCoexBaTracePublished = awdlCoexBaTrace.count;
+            trace->release();
+        }
+    }
+}
+
 static void awdlCoexPublish()
 {
     awdlCoexShareChannel();
@@ -319,6 +358,8 @@ static void awdlCoexPublish()
         root->setProperty("ITLAWDLCoexSameChannelProbeRestoreFailures", awdlCoexSameChannelProbe.restoreFailures, 32);
         root->setProperty("ITLAWDLCoexSameChannelProbeMaxUS", awdlCoexSameChannelProbe.maxUS, 64);
     }
+    if (awdlCoexBaTraceEnabled)
+        awdlCoexPublishBaTrace(root);
     root->setProperty("ITLAWDLCoexReclaimRefused", awdlReclaimRefused, 32);
 }
 
@@ -458,6 +499,8 @@ awdlCoexAttach(struct iwx_softc *sc)
     awdlAwSync = PE_parse_boot_argn("-itlawdlawsync", &dummy, sizeof(dummy));
     // Phase 5: service-record merge on receive.
     awdlServiceMerge = PE_parse_boot_argn("-itlawdlsvcmerge", &dummy, sizeof(dummy));
+    // Phase 5: Block Ack diagnostics.
+    awdlCoexBaTraceEnabled = PE_parse_boot_argn("-itlawdlcoexbatrace", &dummy, sizeof(dummy));
     // Phase 5: the listener's channel preference (see awdlCoexChanPref). Anything else than 149, 44 or 6 is 0.
     uint32_t chanPref = 0;
     if (PE_parse_boot_argn("itlawdlcoexchan", &chanPref, sizeof(chanPref)) &&
@@ -2517,6 +2560,17 @@ static void awdlCoexBaTxNotif(const struct iwx_compressed_ba_notif *ba_res)
     awdlCoexBaTxPeakReportedFrames = MAX(awdlCoexBaTxPeakReportedFrames, uint32_t(le16toh(ba_res->txed)));
     if (awdlVht80TwoStream(awdlCoexBaTxLastRate))
         ++awdlCoexBaTxVht80TwoStreamNotifs;
+}
+
+// -itlawdlcoexbatrace: one Block Ack notification of the aggregation queue, after its reclaim.
+static void awdlCoexBaTxTraceNote(const struct iwx_compressed_ba_notif *ba_res, int queuedBefore, int queuedAfter)
+{
+    if (!awdlCoexBaTraceEnabled)
+        return;
+    awdlCoexBaTrace.note(awdlUptimeUS(), le32toh(ba_res->wireless_time), le32toh(ba_res->tx_rate),
+                         le16toh(ba_res->txed), le16toh(ba_res->done), ba_res->retry_cnt,
+                         unsigned(queuedBefore > 0 ? queuedBefore : 0), unsigned(queuedAfter > 0 ? queuedAfter : 0),
+                         le32toh(ba_res->flags));
 }
 
 // ---------------------------------------------------------------------------------------------------

@@ -373,6 +373,12 @@ static ItlAWDL::PeerServiceCache awdlServiceCache;
 static uint32_t awdlCoexServiceCacheToken;
 static uint32_t awdlServiceMergedFrames, awdlServiceMergedRecords, awdlServiceMergeRefused;
 static uint8_t awdlServiceMergeBuf[ItlAWDL::kServiceMergeFrameMax];
+// Phase 5: -itlawdlcoexbatrace (ForbiddenItlwm's switch). Publishes the Block Ack event log (recorded always)
+// as text, and records the first 4096 Block Ack notifications for the iPhone's aggregation queue (air time,
+// rate, frames sent and acknowledged, retries, queue depth before and after) as ITLAWDLBaTrace.
+static bool awdlCoexBaTraceEnabled;
+static ItlAWDL::BaTrace awdlCoexBaTrace;
+static uint32_t awdlCoexBaTracePublished;
 constexpr uint64_t kAwdlAwSyncWindowUS = 2000, kAwdlAwSyncMinGapUS = 8000;
 // TX response attribution: the response's status is for the descriptor its header index names; the SSN
 // only says how far to reclaim. Slots reclaimed without their own status are counted, not credited.
@@ -432,6 +438,7 @@ static bool awdlCoexBaOwnsRing(const struct iwx_tx_ring *);
 static bool awdlCoexRingHoldsRefs(const struct iwx_tx_ring *);
 static void awdlCoexBaTxResponse(const struct iwx_tx_resp *, const struct iwx_tx_ring *);
 static void awdlCoexBaTxNotif(const struct iwx_compressed_ba_notif *);
+static void awdlCoexBaTxTraceNote(const struct iwx_compressed_ba_notif *, int queuedBefore, int queuedAfter);
 static bool awdlVht80TwoStream(uint32_t rate);
 static mbuf_t awdlCoexFrameMbuf(const uint8_t *bytes, size_t length);
 
