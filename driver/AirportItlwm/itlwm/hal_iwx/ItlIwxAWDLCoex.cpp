@@ -137,6 +137,15 @@ static void awdlCoexPublish()
         root->setProperty("ITLAWDLCoexMovePending", awdlCoexMovePending);
         root->setProperty("ITLAWDLCoexForwardRefused", awdlCoexForwardRefused, 32);
         root->setProperty("ITLAWDLCoexForwardMalformed", awdlCoexForwardMalformed, 32);
+        if (awdlServiceMerge) {
+            root->setProperty("ITLAWDLCoexSvcMerge", true);
+            root->setProperty("ITLAWDLCoexSvcMergedFrames", awdlServiceMergedFrames, 32);
+            root->setProperty("ITLAWDLCoexSvcMergedRecords", awdlServiceMergedRecords, 32);
+            root->setProperty("ITLAWDLCoexSvcMergeRefused", awdlServiceMergeRefused, 32);
+            root->setProperty("ITLAWDLCoexSvcCacheRecords", awdlServiceCache.records, 32);
+            root->setProperty("ITLAWDLCoexSvcCacheResets", awdlServiceCache.resets, 32);
+            root->setProperty("ITLAWDLCoexSvcCacheOverflow", awdlServiceCache.overflow, 32);
+        }
     }
     if (awdlCoexTx) {
         root->setProperty("ITLAWDLCoexStaResult", awdlCoexStaResult, 32);
@@ -447,6 +456,8 @@ awdlCoexAttach(struct iwx_softc *sc)
     awdlCoexBaRx = PE_parse_boot_argn("-itlawdlcoexba", &dummy, sizeof(dummy));
     // Phase 5: AW-timed idle sync frames.
     awdlAwSync = PE_parse_boot_argn("-itlawdlawsync", &dummy, sizeof(dummy));
+    // Phase 5: service-record merge on receive.
+    awdlServiceMerge = PE_parse_boot_argn("-itlawdlsvcmerge", &dummy, sizeof(dummy));
     // Phase 5: the listener's channel preference (see awdlCoexChanPref). Anything else than 149, 44 or 6 is 0.
     uint32_t chanPref = 0;
     if (PE_parse_boot_argn("itlawdlcoexchan", &chanPref, sizeof(chanPref)) &&
@@ -1723,10 +1734,36 @@ awdlCoexRxHook(struct iwx_softc *sc, mbuf_t m, int chanidx, bool chanValid, int 
                     mbuf_setlen(m, coexLen);
                     mbuf_pkthdr_setlen(m, coexLen);
                 }
-                if (ic->ic_vendor_action_handler && ic->ic_vendor_action_handler(ic, m, rxi))
-                    ++awdlCoexForwarded;
-                else
-                    ++awdlCoexForwardRefused;
+                // -itlawdlsvcmerge: the peer's other service records added, if any are missing.
+                bool handed = false;
+                if (awdlServiceMerge && !fromOwnAddr && ourChannel && !(cf[10] & 1)) {
+                    if (awdlCoexServiceCacheToken != awdlCoexToken) {
+                        awdlServiceCache.clear();
+                        awdlCoexServiceCacheToken = awdlCoexToken;
+                    }
+                    awdlServiceCache.note(cf + 10, cf, coexLen);
+                    unsigned added = 0;
+                    const size_t n = awdlServiceCache.merge(cf + 10, cf, coexLen, awdlServiceMergeBuf,
+                                                            sizeof(awdlServiceMergeBuf), &added);
+                    mbuf_t merged = n ? awdlCoexFrameMbuf(awdlServiceMergeBuf, n) : nullptr;
+                    if (merged) {
+                        if (ic->ic_vendor_action_handler && ic->ic_vendor_action_handler(ic, merged, rxi)) {
+                            handed = true;
+                            ++awdlCoexForwarded;
+                            ++awdlServiceMergedFrames;
+                            awdlServiceMergedRecords += added;
+                        } else {
+                            ++awdlServiceMergeRefused;
+                        }
+                        mbuf_freem(merged);
+                    }
+                }
+                if (!handed) {
+                    if (ic->ic_vendor_action_handler && ic->ic_vendor_action_handler(ic, m, rxi))
+                        ++awdlCoexForwarded;
+                    else
+                        ++awdlCoexForwardRefused;
+                }
             } else if (awdlCoexRx) {
                 ++awdlCoexForwardMalformed;
                 // Not AWDL's own format: a Block Ack request or teardown to our address, from a peer we hear.

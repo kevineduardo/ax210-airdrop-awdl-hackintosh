@@ -33,6 +33,7 @@
 #include <AWDLCoex/AWDLProbePolicy.hpp>
 #include <AWDLCoex/AWDLBlockAck.hpp>
 #include <AWDLCoex/AWDLSameChannelProbe.hpp>
+#include <AWDLCoex/AWDLServiceMerge.hpp>
 
 // The engine is selected for this boot (ic_awdl_coex_on at attach). Read by the P2P path's guards.
 static bool awdlCoexSelected;
@@ -364,6 +365,14 @@ static uint32_t awdlCoexIdleSyncFrames;
 // most one per kAwdlAwSyncMinGapUS, within kAwdlAwSyncWindowUS of the AW start; the task wakes for the next AW.
 static bool awdlAwSync;
 static uint32_t awdlCoexAwSyncFrames;
+// Phase 5: -itlawdlsvcmerge (ForbiddenItlwm's switch). The iPhone spreads its service records (TLV 2) over
+// several frames with the same service update indicator; each frame from it heard on our channel gets the
+// records it lacks added from the ones cached for that indicator, so macOS sees them all sooner.
+static bool awdlServiceMerge;
+static ItlAWDL::PeerServiceCache awdlServiceCache;
+static uint32_t awdlCoexServiceCacheToken;
+static uint32_t awdlServiceMergedFrames, awdlServiceMergedRecords, awdlServiceMergeRefused;
+static uint8_t awdlServiceMergeBuf[ItlAWDL::kServiceMergeFrameMax];
 constexpr uint64_t kAwdlAwSyncWindowUS = 2000, kAwdlAwSyncMinGapUS = 8000;
 // TX response attribution: the response's status is for the descriptor its header index names; the SSN
 // only says how far to reclaim. Slots reclaimed without their own status are counted, not credited.

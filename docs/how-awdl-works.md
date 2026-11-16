@@ -107,7 +107,7 @@ Because both paths use MAC 1, PHY context 1 and firmware station 3, they never r
 - The receive Block Ack responder is off unless `-itlawdlcoexba` is set; ForbiddenItlwm runs it whenever its data mode is on.
 - Send Block Ack (`-itlawdlcoexbatx`), the peer pause (`-itlawdlcoexpeerpause`) and the same-channel probe window (`-itlawdlcoexsamechprobe`) are off by default, as in ForbiddenItlwm. ForbiddenItlwm's optional refill on reclaim (`-itlawdlcoexbarefill`, no gain measured there), its shared-channel ask switch and its receive-filter hysteresis switch are not ported.
 - AW-timed idle sync frames (`-itlawdlawsync`) need the iPhone's schedule to be known (offset 0 assumed or calibrated); ForbiddenItlwm's `-itlawdlcoexawsync0`, which also times them from an uncalibrated sequence, is not ported.
-- The service-record merge is a later phase of the port.
+- The service-record merge (`-itlawdlsvcmerge`) hands the merged copy to `awdl0` instead of the original frame, through the same `ic_vendor_action_handler`.
 
 ### Block Ack
 
@@ -162,7 +162,7 @@ The listener's channel is picked from the firmware's own channel map, after the 
 | 2 | Transmit: the listener's own firmware station (2) and queue, macOS's sync frames (MI and PSF alternating, every 45 ms idle and 100 ms during data, built by the AWDL interface with all 16 slots on the listener's channel), `awdl0`'s data pulled one frame at a time (`ic_awdl_coex_pop`) with fixed rates (6 Mbit/s group, 24 Mbit/s, then HT MCS 4, 5, 7, then VHT80 2SS MCS 4 and 7) and a rate ladder fed by the TX responses, the stuck-frame watchdog, and the send gate that holds frames for the iPhone while its schedule says it is away or dozing |
 | 3 | Receive Block Ack (`-itlawdlcoexba`): ADDBA answers, the iPhone's station and firmware session, DELBA and idle teardown, promiscuous receive off while a session is open, arrival-order counters |
 | 4 | Send Block Ack and A-MPDU (`-itlawdlcoexbatx`): aggregation queue on TID 0, firmware rate control at VHT80 two streams, our ADDBA request, QoS conversion in the data pump, Block Ack notifications counted, peer pause (`-itlawdlcoexpeerpause`), ordering rule, probe window |
-| 5 | Optional, each off by default: 44 at 80 MHz as a fallback or first choice (`itlawdlcoexchan=`), AW-timed idle sync frames (`-itlawdlawsync`) |
+| 5 | Optional, each off by default: 44 at 80 MHz as a fallback or first choice (`itlawdlcoexchan=`), AW-timed idle sync frames (`-itlawdlawsync`), service-record merge on receive (`-itlawdlsvcmerge`) |
 
 Hardware checks per phase: [test-results-tahoe.md](test-results-tahoe.md#coex-backend-to-test-on-hardware).
 

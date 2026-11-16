@@ -414,6 +414,18 @@ Results: not run yet.
 
 Results: not run yet.
 
+#### Service-record merge (`-itlawdlsvcmerge`)
+
+| Check | Command or key | Expected |
+|---|---|---|
+| Switch seen | `ITLAWDLCoexSvcMerge` | `Yes` |
+| Cache | `ITLAWDLCoexSvcCacheRecords`, `ITLAWDLCoexSvcCacheResets`, `ITLAWDLCoexSvcCacheOverflow` | records above 0 with the iPhone's share sheet open; resets small (one per service change); overflow 0 |
+| Merged | `ITLAWDLCoexSvcMergedFrames`, `ITLAWDLCoexSvcMergedRecords` | rising while the iPhone advertises; `ITLAWDLCoexSvcMergeRefused` 0 |
+| Discovery | Share sheet on the iPhone, 5 times with and 5 times without the switch, Mac AirDrop window open | Record the seconds until each side lists the other. Expected: same or shorter with the switch |
+| macOS reads them | `/usr/bin/log show --last 2m --predicate 'process == "wifip2pd"' \| grep -i service` | No parse errors about the iPhone's frames |
+
+Results: not run yet.
+
 ## OpenCore requirements for Tahoe
 
 - `Kernel > Quirks > PowerTimeoutKernelPanic = false`. On kernel 25.6 the quirk falls back to replacing the kernel's first `"com.apple\0"` with `"not.apple\0"`, which breaks pf anchor checks, turns off Skywalk's transport agent and breaks QUIC pacing.
