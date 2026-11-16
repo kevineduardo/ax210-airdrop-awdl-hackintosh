@@ -46,8 +46,8 @@ static struct ieee80211com *awdlCoexIc;
 // -itlawdlcoexprobe (awdlCoexProbe), -itlawdlcoexrx (awdlCoexRx), -itlawdlcoextx (awdlCoexTx),
 // -itlawdlcoexmulti (awdlCoexMulti) and -itlawdlcoexdata (awdlCoexData); here -itlawdlcoex turns on
 // what each phase of the port has: phase 1 the listener, the country answers and receive (with data
-// receive, awdlCoexDataRx, which ForbiddenItlwm ties to -itlawdlcoexdata).
-static bool awdlCoexProbe, awdlCoexRx, awdlCoexTx, awdlCoexMulti, awdlCoexData, awdlCoexDataRx;
+// receive, awdlCoexDataRxOn, which ForbiddenItlwm ties to -itlawdlcoexdata).
+static bool awdlCoexProbe, awdlCoexRx, awdlCoexTx, awdlCoexMulti, awdlCoexData, awdlCoexDataRxOn;
 // -itlawdlcoexshared (A/B): never an own PHY context; the listener shares the station's binding.
 static bool awdlCoexShared;
 // -itlawdlsameband (#16 in ForbiddenItlwm): while the station is on 2.4 GHz, keep the listener on

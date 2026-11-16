@@ -85,7 +85,7 @@ static void awdlCoexPublish()
     root->setProperty("ITLAWDLCoexAddrApplied", awdlCoexAddrApplied);
     root->setProperty("ITLAWDLCoexTeardownErrors", awdlCoexTeardownErrors, 32);
     root->setProperty("ITLAWDLCoexBroken", awdlCoexBrokenGeneration >= 0 && awdlCoexBrokenGeneration == awdlCoexGeneration);
-    if (awdlCoexDataRx) {
+    if (awdlCoexDataRxOn) {
         root->setProperty("ITLAWDLCoexDataRx", awdlCoexDataRx, 32);
         root->setProperty("ITLAWDLCoexDataRxHandedOff", awdlCoexDataRxDelivered, 32);
         root->setProperty("ITLAWDLCoexDataRxRefused", awdlCoexDataRxRefused, 32);
@@ -221,7 +221,7 @@ awdlCoexAttach(struct iwx_softc *sc)
     // every AWDL action and data frame it hears handed to awdl0. Nothing is sent from it yet.
     awdlCoexProbe = true;
     awdlCoexRx = true;
-    awdlCoexDataRx = true;
+    awdlCoexDataRxOn = true;
     awdlCoexShared = PE_parse_boot_argn("-itlawdlcoexshared", &dummy, sizeof(dummy));
     awdlCoexMulti = !awdlCoexShared;
     awdlCoexSameBand = PE_parse_boot_argn("-itlawdlsameband", &dummy, sizeof(dummy));
@@ -1228,7 +1228,7 @@ awdlCoexRxHook(struct iwx_softc *sc, mbuf_t m, int chanidx, bool chanValid, int 
                 if ((uint32_t(rate_n_flags) & IWX_RATE_MCS_CHAN_WIDTH_MSK) == IWX_RATE_MCS_CHAN_WIDTH_80)
                     ++awdlCoexRxWide80;
             }
-            if (awdlCoexDataRx && !mbuf_next(m)) {
+            if (awdlCoexDataRxOn && !mbuf_next(m)) {
                 ++awdlCoexDataRx;
                 ItlAWDL::DataFrameView view;
                 if (!chanValid || unsigned(chanidx) != awdlCoexChannel) {
