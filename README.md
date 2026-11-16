@@ -149,7 +149,7 @@ This project is built on other people's work. What we used from each:
 | [acidanthera/MacKernelSDK](https://github.com/acidanthera/MacKernelSDK) | see repo | Kernel headers for building the kexts (build-time dependency, not stored here) |
 | [OpenIntelWireless/IntelBluetoothFirmware](https://github.com/OpenIntelWireless/IntelBluetoothFirmware) | GPL-3.0 | Bluetooth firmware loader and IntelBTPatcher, used at run time (not included) |
 | OpenBSD `iwx(4)` / `net80211`, Linux `iwlwifi` / `iwlmvm` | ISC / BSD / GPL-2.0 | The drivers itlwm was ported from; iwlmvm's P2P-device approach is what our P2P listen copies |
-| [retropineaple/ForbiddenItlwm](https://github.com/retropineaple/ForbiddenItlwm) | GPL-2.0 | The idea and the vtable anchors of the AWDL build guard (AirDrop only starts on verified macOS builds), and the user compatibility checker that `scripts/check-compat.sh` is modeled on |
+| [retropineaple/ForbiddenItlwm](https://github.com/retropineaple/ForbiddenItlwm) | GPL-2.0 | The idea and the vtable anchors of the AWDL build guard (AirDrop only starts on verified macOS builds), the user compatibility checker that `scripts/check-compat.sh` is modeled on, and the AWDL coex listener engine behind the opt-in `-itlawdlcoex` backend (listener context beside Wi-Fi, country answers, sync and data TX, send gate) with its header-only helpers and host tests (ported, GPL-2.0) |
 | Intel `iwlwifi` firmware | [redistributable](driver/AirportItlwm/iwlwifi-firmware-license) | Firmware bundled in the kext by upstream |
 
 **AI disclosure.** This port was developed by [Kevin Eduardo](https://github.com/kevineduardo) with AI coding assistance from Anthropic's Claude models (Claude Opus 5.5 for most of the work, Claude Fable 5.2 for the panic analysis and the AirDrop failure analysis). Every change was built, checked with the tools in this repo and tested on real hardware before it was kept.
@@ -158,6 +158,7 @@ This project is built on other people's work. What we used from each:
 
 - `driver/AirportItlwm` and `driver/BlueToolFixup`: **GPL-2.0**, like the projects they come from. Our changes to them are GPL-2.0 too; changed files carry a notice at the top and are listed in [CHANGES-FROM-UPSTREAM.md](CHANGES-FROM-UPSTREAM.md).
 - Everything else (docs, tools, scripts, tests, CI): **MIT**, see [LICENSE](LICENSE).
+- Exception: `tests/unit/awdlcoex/` holds host tests ported from ForbiddenItlwm. They test GPL-2.0 driver headers and stay **GPL-2.0** (each file says so in its SPDX line). The rest of `tests/` is MIT.
 
 ## Legal
 

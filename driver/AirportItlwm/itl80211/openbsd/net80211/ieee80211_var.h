@@ -592,6 +592,32 @@ struct ieee80211com {
      * UNII-1 (36-48), other 5 GHz (52-144, DFS), UNII-3 (149+) */
     uint32_t        ic_awdl_tx_ok_band[4];
     uint32_t        ic_awdl_tx_fail_band[4];
+    /*
+     * AWDL coex backend (-itlawdlcoex, ported from ForbiddenItlwm): the HAL
+     * keeps a LISTENER MAC context on its own channel beside the station and
+     * pulls frames from the AWDL interface. ic_awdl_coex_on is set by the
+     * front end before the HAL attaches, only when -itlawdl, -itlawdlcoex and
+     * the AWDL build guard allow it; the P2P listen path is then never
+     * installed. The HAL writes the listener's channel, width and the
+     * operating class our frames should advertise (0 = 20 MHz class).
+     */
+    uint8_t         ic_awdl_coex_on;
+    uint8_t         ic_awdl_coex_chan;
+    uint8_t         ic_awdl_coex_width;
+    uint8_t         ic_awdl_coex_class;
+    /* Set by the AWDL interface; the HAL calls them inside the command gate. */
+    size_t          (*ic_awdl_coex_sync)(struct ieee80211com *, uint8_t *buf, size_t cap,
+                        uint64_t now_us);
+    size_t          (*ic_awdl_coex_pop)(struct ieee80211com *, uint8_t *buf, size_t cap,
+                        const uint8_t *hold_for, int hold_every_size);
+    unsigned        (*ic_awdl_coex_queued)(struct ieee80211com *);
+    void            (*ic_awdl_coex_service)(struct ieee80211com *);
+    /*
+     * Channels where an AP was heard beaconing on its own channel (a beacon
+     * hint, as Linux cfg80211 keeps them). A passive channel with a hint may
+     * be used by the coex listener. Cleared when the country changes.
+     */
+    u_char          ic_beacon_hint[howmany(IEEE80211_CHAN_MAX, NBBY)];
 	CTimeout*		ic_bgscan_timeout;
 	uint32_t		ic_bgscan_fail;
 	u_int8_t		ic_myaddr[IEEE80211_ADDR_LEN];

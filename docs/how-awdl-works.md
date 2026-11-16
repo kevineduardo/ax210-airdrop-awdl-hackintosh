@@ -67,6 +67,50 @@ The AWDL code above the HAL only uses a handful of callbacks and fields in `stru
 - Receiving data. The P2P MAC delivers only management frames unless `IN_PROMISC` is set. With `-itlawdlpromisc` the driver sets it while an AWDL peer is active, so the firmware delivers and ACKs data addressed to `awdl0`.
 - Transmitting. Frames go out on the P2P MAC's queue, and only while the dwell is actually running on the right channel. The firmware starts a dwell with a variable delay (2 to 75 ms in our measurements), so the TX pump (`-itlawdltxpump`) polls the dwell state every millisecond and sends as soon as it starts, instead of at fixed offsets. That change moved most data frames from "> 1 s queued" to "< 5 ms". Details: [research/awdl-tx-timing.md](research/awdl-tx-timing.md).
 
+## The coex backend
+
+`-itlawdlcoex` selects a second, experimental way to run AWDL on the Intel firmware. It is a port of the "coex listener" engine from [ForbiddenItlwm](https://github.com/retropineaple/ForbiddenItlwm) by retropineaple (GPL-2.0, commit `a5f1eb9`). Without the switch nothing of it runs and the P2P path above works exactly as before.
+
+### How it differs from the P2P path
+
+| | P2P path (default) | Coex backend (`-itlawdlcoex`) |
+|---|---|---|
+| Second MAC context | `P2P_DEVICE`, MAC 1 | `LISTENER`, MAC 1, TSF B |
+| Channel | Moves to each AW slot's channel for a short dwell (`SESSION_PROTECTION_CMD`), then back | Stays on one channel of its own for as long as en0 is associated: 149 at 80 MHz when the firmware allows it, else 6 at 20 MHz, else the station's channel |
+| Who shares the radio | The host, by asking for dwells ahead of each slot (`itlawdllead`) | The firmware itself (`DYNAMIC_QUOTA`): two PHY contexts and two bindings, scheduled by the firmware |
+| Timing on the host | AW timeline, listen timer, TX pump polling the dwell state | A HAL task every 1 to 113 ms; no dwell to wait for, so a frame can leave as soon as the peer is on our channel |
+| Channel rules | The channel list macOS asks for | The firmware's own channel map, after answering its country notice (`MCC_UPDATE_CMD`, as Linux does), plus beacon hints for passive channels. DFS and no-ad-hoc channels are never used to start a transmission |
+| Frames our sync frames advertise | The slots macOS chose | All 16 slots on the listener's channel (op class 128 at 80 MHz) |
+| Data path | `flushData` pushes frames during a dwell | The HAL pulls frames from `awdl0` (`ic_awdl_coex_pop`) and sends them from the listener's queue, gated by the peer's schedule |
+| Firmware objects | MAC 1, PHY 1, station 3 + its queue | MAC 1, PHY 1, station 2 (listener) + its queue; station 3 for the Block Ack peer (later phase) |
+
+Because both paths use MAC 1, PHY context 1 and firmware station 3, they never run in the same boot. The front end decides before the HAL attaches (`ic_awdl_coex_on`); with it set the HAL never installs `ic_awdl_listen`, `ic_awdl_tx` and `ic_awdl_dwell_state`, refuses `iwx_awdl_listen`, and reports the P2P path as disabled. `AWDLBackend` on the controller and on `awdl0` shows which backend runs (`coex`, `p2p`, `scan` or `none`). The AWDL build guard still applies: on a build it blocks, `-itlawdlcoex` does nothing either.
+
+### Where the code is
+
+| Part | Files |
+|---|---|
+| Engine (HAL) | `itlwm/hal_iwx/ItlIwxAWDLCoex.hpp` (state) and `ItlIwxAWDLCoex.cpp` (functions). ItlIwx.cpp includes both, so the engine shares its statics; hooks in `iwx_tx`, `iwx_rx_frame`, `iwx_rx_tx_cmd` and friends are one-line calls under `#ifdef AIRPORT_WCL` |
+| Pure helpers | `include/AWDLCoex/*.hpp` (frame parsers and builders, peer schedule, regulatory, Block Ack), copied from ForbiddenItlwm, host-tested in `tests/unit/awdlcoex/` |
+| Seam to the AWDL interface | `ic_awdl_coex_*` in `ieee80211_var.h`: the HAL writes the listener's channel, width and op class; the AWDL interface provides the pull callbacks |
+| Beacon hints | `ieee80211_input.c` marks channels where an AP beacons on its own channel (`ic_beacon_hint`) |
+
+### Safety rules kept from ForbiddenItlwm
+
+- Every firmware command can sleep in the command gate. After each one the engine checks its token, the firmware generation and the stop flag before it touches state again.
+- A command that fails without a readable answer leaves the firmware state unknown. The engine then stops using that part (listener, own channel, Block Ack) until the firmware restarts.
+- Frames on the listener's queues never reset en0's TX watchdog and never count as en0 errors.
+- While the listener receives promiscuously, frames that belong to it never reach net80211.
+- `LOW_LATENCY_CMD` is not ported: it took Wi-Fi down on an AX211.
+
+### Phases
+
+| Phase | What it adds |
+|---|---|
+| 0 | Backend selection, P2P path off, firmware capabilities published (`ITLAWDLCoexFw*`), beacon hints, helpers and host tests, two HAL fixes (Block Ack notifications for other firmware stations are reclaimed; `iwx_flush_sta_tids` no longer reads past `sc_tid_data`) |
+
+Hardware checks per phase: [test-results-tahoe.md](test-results-tahoe.md#coex-backend-to-test-on-hardware).
+
 ## The availability-window timeline
 
 AWDL devices agree on a timeline: a sequence of 16 slots, each one AW-period long, each assigned to a channel (for example `149 0 0 0 6 0 ...`, where 0 means "not on AWDL"). The elected master defines the timeline and everyone else synchronizes to it from the PSF/MI frames.

@@ -29,6 +29,7 @@ What exists today:
 | `tests/unit/test_kcsyms.py` | Kernel collection parser and vtable decoding (synthetic Mach-O, no Apple files) |
 | `tests/unit/test_advsets_tables.py` | BlueToolFixup patch tables are consistent; the verifier searches the same patterns as the kext |
 | `tests/unit/test_awdlctl.c` | `awdlctl` argument parsing and ranges |
+| `tests/unit/awdlcoex/*.cpp` | Header-only helpers of the AWDL coex backend (frame parsers and builders, peer schedule, regulatory, Block Ack); ported from ForbiddenItlwm, GPL-2.0 |
 | CI build matrix | AirportItlwm Sequoia/Tahoe × Debug/Release, BlueToolFixup Debug/Release, `awdlctl` |
 | `tools/check-kext.sh` (CI, after every build) | One `ieee80211com`/`ieee80211_node`/... layout across all compile units; layout fingerprint |
 

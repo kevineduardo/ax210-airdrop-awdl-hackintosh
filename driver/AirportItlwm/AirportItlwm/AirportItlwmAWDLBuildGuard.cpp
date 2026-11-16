@@ -149,4 +149,25 @@ bool airportAWDLEnabled()
     return enabled == 1;
 }
 
+bool airportAWDLCoexEnabled()
+{
+    static int enabled = -1;
+    if (enabled < 0) {
+        int v = 0;
+        enabled = airportAWDLEnabled() && PE_parse_boot_argn("-itlawdlcoex", &v, sizeof(v)) ? 1 : 0;
+    }
+    return enabled == 1;
+}
+
+const char *airportAWDLBackendName()
+{
+    if (!airportAWDLEnabled())
+        return "none";
+    if (airportAWDLCoexEnabled())
+        return "coex";
+    int v = 0;
+    // Without -itlawdlp2p the HAL listens with aux remain-on-channel or scan dwells.
+    return PE_parse_boot_argn("-itlawdlp2p", &v, sizeof(v)) ? "p2p" : "scan";
+}
+
 #endif /* AIRPORT_AWDL */

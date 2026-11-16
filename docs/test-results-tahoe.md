@@ -249,6 +249,42 @@ In order of impact on daily use.
 - AirDrop with the devices on different networks (forces the body over AWDL both ways).
 - The RPA / Filter Accept List `bluetoothd` patch (separate branch, untested).
 
+## Coex backend: to test on hardware
+
+The coex backend (`-itlawdlcoex`, ported from ForbiddenItlwm, see [how-awdl-works.md](how-awdl-works.md#the-coex-backend)) lands in phases. Kevin runs these checks on the test machine (Ryzen 5 5600G, AX210, Tahoe 26.7.2 25G332, access point on channel 100, a DFS channel, in Portugal) after CI has built each phase. Record the numbers in this file.
+
+Boot sets used below:
+
+- **Set A** (regression): the recommended Tahoe set from [boot-args.md](boot-args.md), no new switch.
+- **Set B** (coex): Set A plus `-itlawdlcoex`. The P2P switches in Set A then do nothing; they can stay.
+
+Keep `keepsyms=1 debug=0x100` while testing.
+
+### Every phase: regression with Set A
+
+| Check | Command | Expected |
+|---|---|---|
+| No coex state without the switch | `ioreg -lw0 -r -c AirportItlwm -d1 \| grep -c ITLAWDLCoex` | `0` |
+| Backend name | `ioreg -lw0 -r -c AirportItlwm -d1 \| grep AWDLBackend` | `"p2p"` |
+| Normal Wi-Fi | `networkQuality -s`; `ping -c 50 <gateway>` | Within 10 % of the last baseline (about 200/106 Mbps, ping 7 to 13 ms) |
+| P2P AirDrop | 12 MB photo each way with `tools/airdrop/airdrop-measure.sh` | Same as 1.0.0-beta.2 (iPhone to Mac 12 MB in 3 to 4 s; Mac to iPhone about 1 MB/s) |
+| Wi-Fi off/on, reconnect | Wi-Fi menu off/on 5 times; switch network once | No panic, en0 back each time |
+
+### Phase 0: groundwork (Set B)
+
+Nothing is sent from a listener yet. AirDrop is not expected to work with Set B.
+
+| Check | Command | Expected |
+|---|---|---|
+| Backend selected | `ioreg -lw0 -r -c AirportItlwm -d1 \| grep -E 'AWDLBackend\|ITLAWDLCoexSelected'` | `AWDLBackend = "coex"`, `ITLAWDLCoexSelected = Yes` |
+| Same on `awdl0` | `ioreg -lw0 -r -c AirportItlwmAWDLInterface -d1 \| grep AWDLBackend` | `"coex"` |
+| Firmware capabilities | `ioreg -lw0 -r -c AirportItlwm -d1 \| grep ITLAWDLCoexFw` | `ITLAWDLCoexFwDynamicQuota = Yes` (needed for the listener's own channel). Record every `ITLAWDLCoexFwVer*` here. Expected: `TxCmd` above 8 (else the fixed VHT rates are skipped), `TlcConfig` 4, `AddSta` 12 or more. 99 means the firmware does not list the command |
+| P2P path is off | `ioreg -lw0 -r -c AirportItlwmAWDLInterface -d1 \| grep -E 'AWDLRoc(Sent\|Started)\|AWDLListenStarted'` | all 0 (or absent) |
+| Normal Wi-Fi | `networkQuality -s` | same as Set A |
+| Kernel log | `log show --last boot --predicate 'eventMessage CONTAINS "coex"'` | `AWDL coex backend selected` once, no firmware errors |
+
+Results: not run yet.
+
 ## OpenCore requirements for Tahoe
 
 - `Kernel > Quirks > PowerTimeoutKernelPanic = false`. On kernel 25.6 the quirk falls back to replacing the kernel's first `"com.apple\0"` with `"not.apple\0"`, which breaks pf anchor checks, turns off Skywalk's transport agent and breaks QUIC pacing.

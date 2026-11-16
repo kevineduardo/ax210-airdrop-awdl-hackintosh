@@ -402,7 +402,14 @@ bool AirportItlwm::start(IOService *provider)
         XYLog("experimental AWDL enabled\n");
         fHalService->get80211Controller()->ic_vendor_action_handler = awdlActionFrameHandler;
         fHalService->get80211Controller()->ic_awdl_data_handler = awdlDataFrameHandler;
+        // The coex backend (-itlawdlcoex) is chosen before the HAL attaches: the HAL then never
+        // installs the P2P listen callbacks in this boot.
+        if (airportAWDLCoexEnabled()) {
+            XYLog("AWDL coex backend selected (-itlawdlcoex)\n");
+            fHalService->get80211Controller()->ic_awdl_coex_on = 1;
+        }
     }
+    setProperty("AWDLBackend", airportAWDLBackendName());
 #endif
 
     if (!fHalService->attach(pciNub)) {

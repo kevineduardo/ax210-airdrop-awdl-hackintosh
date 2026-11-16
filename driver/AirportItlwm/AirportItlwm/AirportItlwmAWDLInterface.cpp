@@ -10,6 +10,7 @@
 
 #include "AirportItlwmV2.hpp"
 #include "AirportItlwmAWDLInterface.hpp"
+#include "AirportItlwmAWDLBuildGuard.hpp"
 #include "AirportItlwmSkywalkInterface.hpp"
 #include <IOKit/IOUserClient.h>
 
@@ -2947,6 +2948,9 @@ withController(AirportItlwm *controller, ether_addr *mac)
         return nullptr;
     }
     ifp->fController = controller;
+    // Which listen/TX backend the HAL runs in this boot (the coex backend leaves the
+    // P2P listen callbacks unset, so maybeListen/startListen/sendAWDLFrame stay idle).
+    ifp->setProperty("AWDLBackend", airportAWDLBackendName());
     // Runs on the controller work loop, like the rx path and the ioctls, so the
     // timeline state needs no extra locking.
     if (!awTimelineAllowed())

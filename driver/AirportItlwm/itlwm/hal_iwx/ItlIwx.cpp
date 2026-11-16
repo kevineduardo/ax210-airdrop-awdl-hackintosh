@@ -126,6 +126,11 @@
 #include <sys/pcireg.h>
 #include <net80211/ieee80211_priv.h>
 
+#ifdef AIRPORT_WCL
+/* AWDL coex backend (-itlawdlcoex), ported from ForbiddenItlwm. */
+#include "ItlIwxAWDLCoex.hpp"
+#endif
+
 #define super ItlHalService
 OSDefineMetaClassAndStructors(ItlIwx, ItlHalService)
 
@@ -175,6 +180,10 @@ bool ItlIwx::attach(IOPCIDevice *device)
 void ItlIwx::
 detach(IOPCIDevice *device)
 {
+#ifdef AIRPORT_WCL
+    // The AWDL coex timers and their tasks are global and take the softc: stop them before anything goes.
+    awdlStopTimers();
+#endif
 #ifdef AIRPORT_VTD
     getMainCommandGate()->runAction(
         [](OSObject *, void *arg0, void *arg1, void *, void *) -> IOReturn {
@@ -6231,6 +6240,30 @@ iwx_clear_oactive(struct iwx_softc *sc, struct iwx_tx_ring *ring)
     }
 }
 
+/*
+ * Whether a firmware completion boundary may be reclaimed on this ring: the ring has to be allocated
+ * (a power-of-two size that fits its slot array), the boundary inside it, and the slots it would free no
+ * more than are outstanding. A stale or backward boundary would otherwise wrap and free newer frames,
+ * and an unallocated ring would reclaim modulo zero.
+ * From ForbiddenItlwm (retropineaple), commit a5f1eb9, GPL-2.0.
+ */
+/* Completion boundaries refused by iwx_txq_reclaim_ok (published as ITLAWDLCoexReclaimRefused). */
+static uint32_t awdlReclaimRefused;
+
+static bool
+iwx_txq_reclaim_ok(const struct iwx_tx_ring *ring, int idx)
+{
+    const unsigned n = ring->ring_count;
+    if (n == 0 || n > nitems(ring->data) || (n & (n - 1)) != 0 || ring->desc == NULL)
+        return false;
+    if (idx < 0 || unsigned(idx) >= n || ring->tail < 0 || unsigned(ring->tail) >= n)
+        return false;
+    const unsigned freed = (unsigned(idx) - unsigned(ring->tail) + n) % n;
+    const unsigned written = (unsigned(ring->cur) - unsigned(ring->tail) + n) % n;
+    const unsigned queued = ring->queued > 0 ? unsigned(ring->queued) : 0;
+    return freed <= (queued > written ? queued : written);
+}
+
 void ItlIwx::
 iwx_rx_tx_ba_notif(struct iwx_softc *sc, struct iwx_rx_packet *pkt, struct iwx_rx_data *data)
 {
@@ -6244,9 +6277,29 @@ iwx_rx_tx_ba_notif(struct iwx_softc *sc, struct iwx_rx_packet *pkt, struct iwx_r
     if (length < sizeof(*ba_res) ||
         le16toh(ba_res->tfd_cnt) > (length - sizeof(*ba_res)) / sizeof(ba_res->tfd[0]))
         return;
-    if (ba_res->sta_id != IWX_STATION_ID)
-        return;
-    sc->sc_tx_timer = 0;
+    /*
+     * Block Ack notifications for another firmware station (for example the AWDL peer station of the
+     * coex backend) used to be dropped here, so that station's queue was never reclaimed. Like iwlmvm,
+     * they are reclaimed now, but only when every TFD record names an allocated queue with a boundary
+     * that is safe to reclaim (checked before anything changes), and they don't touch en0's TX watchdog.
+     * The station's own notifications are handled exactly as before.
+     */
+    const bool stationNotif = ba_res->sta_id == IWX_STATION_ID;
+    if (!stationNotif) {
+        for (i = 0; i < le16toh(ba_res->tfd_cnt); i++) {
+            const uint16_t q = le16toh(ba_res->tfd[i].q_num);
+            if (q >= nitems(sc->txq))
+                return;
+            const struct iwx_tx_ring *r = &sc->txq[q];
+            if (!iwx_txq_reclaim_ok(r, int(IWX_AGG_SSN_TO_TXQ_IDX(le16toh(ba_res->tfd[i].tfd_index),
+                                                                   r->ring_count)))) {
+                ++awdlReclaimRefused;
+                return;
+            }
+        }
+    }
+    if (stationNotif)
+        sc->sc_tx_timer = 0;
 
     if (le32toh(ba_res->flags) != IWX_BA_RESP_TX_BAR && le32toh(ba_res->flags) != IWX_BA_RESP_TX_AGG){
         DPRINTFN(3, ("BA_NOTIFICATION flags %x, sent:%d, acked:%d, tfd_cnt:%d, query_frame_cnt:%d, retry_cnt:%d\n",
@@ -6273,7 +6326,8 @@ iwx_rx_tx_ba_notif(struct iwx_softc *sc, struct iwx_rx_packet *pkt, struct iwx_r
             continue;
         ring = &sc->txq[qid];
 
-        sc->sc_tx_timer = 0;
+        if (stationNotif)
+            sc->sc_tx_timer = 0;
 
         iwx_ampdu_txq_advance(sc, ring, IWX_AGG_SSN_TO_TXQ_IDX(le16toh(ba_tfd->tfd_index), ring->ring_count));
         iwx_clear_oactive(sc, ring);
@@ -7480,7 +7534,11 @@ iwx_flush_sta_tids(struct iwx_softc *sc, int sta_id, uint16_t tids)
         uint16_t qid = le16toh(queue_info->queue_num);
         struct iwx_tx_ring *txq;
         
-        if (qid >= nitems(sc->txq))
+        /*
+         * The firmware reports IWX_MGMT_TID (15) for management queues; sc_tid_data has
+         * IWX_MAX_TID_COUNT + 1 entries. Bound from ForbiddenItlwm (a5f1eb9, GPL-2.0).
+         */
+        if (qid >= nitems(sc->txq) || tid >= nitems(sc->sc_tid_data))
             continue;
 
         if (sc->sc_tid_data[tid].qid != qid)
@@ -9256,6 +9314,11 @@ static bool iwx_awdl_promisc_enabled()
 
 static bool iwx_p2p_listen_enabled()
 {
+#ifdef AIRPORT_WCL
+    /* The coex backend owns MAC 1, PHY 1 and station 3 in this boot. */
+    if (awdlCoexSelected)
+        return false;
+#endif
     static int enabled = -1;
     if (enabled < 0) {
         int v;
@@ -9349,6 +9412,11 @@ iwx_awdl_listen(struct ieee80211com *ic, uint8_t chan, uint16_t dwell_tu)
     struct iwx_softc *sc = (struct iwx_softc *)IC2IFP(ic)->if_softc;
     ItlIwx *that = container_of(sc, ItlIwx, com);
     
+#ifdef AIRPORT_WCL
+    /* Never installed with the coex backend; refuse anyway (P2P, aux ROC and scan dwells all off). */
+    if (awdlCoexSelected)
+        return ENOTSUP;
+#endif
     if (sc->sc_flags & (IWX_FLAG_SCANNING | IWX_FLAG_BGSCAN | IWX_FLAG_SHUTDOWN |
                         IWX_FLAG_HW_ERR | IWX_FLAG_RFKILL))
         return EBUSY;
@@ -11872,8 +11940,12 @@ iwx_init(struct _ifnet *ifp)
         err = iwx_init_hw(sc);
         if (generation != sc->sc_generation)
             return ENXIO;
-        if (!err)
+        if (!err) {
+#ifdef AIRPORT_WCL
+            awdlCoexPublishFirmware(sc);
+#endif
             break;
+        }
         generation = ++sc->sc_generation;
         iwx_stop_device(sc);
         if (attempt != 0 || err == ENXIO || !(ifp->if_flags & IFF_UP) ||
@@ -14990,9 +15062,19 @@ iwx_attach(struct iwx_softc *sc, struct pci_attach_args *pa)
     
     ic->ic_node_alloc = iwx_node_alloc;
     ic->ic_bgscan_start = iwx_bgscan;
-    ic->ic_awdl_listen = iwx_awdl_listen;
-    ic->ic_awdl_tx = iwx_awdl_tx;
-    ic->ic_awdl_dwell_state = iwx_awdl_dwell_state;
+#ifdef AIRPORT_WCL
+    /*
+     * AWDL coex backend: the front end set ic_awdl_coex_on before attach. The P2P listen
+     * path (listen dwells, P2P TX, dwell state) is then never installed in this boot.
+     */
+    awdlCoexAttach(sc);
+    if (!awdlCoexSelected)
+#endif
+    {
+        ic->ic_awdl_listen = iwx_awdl_listen;
+        ic->ic_awdl_tx = iwx_awdl_tx;
+        ic->ic_awdl_dwell_state = iwx_awdl_dwell_state;
+    }
     ic->ic_set_key = iwx_set_key;
     ic->ic_delete_key = iwx_delete_key;
     
@@ -15153,3 +15235,9 @@ iwx_activate(struct iwx_softc *sc, int act)
     
     return 0;
 }
+
+#ifdef AIRPORT_WCL
+/* The AWDL coex engine shares this file's statics; see ItlIwxAWDLCoex.hpp. */
+#define ITLIWX_AWDLCOEX_FROM_ITLIWX 1
+#include "ItlIwxAWDLCoex.cpp"
+#endif

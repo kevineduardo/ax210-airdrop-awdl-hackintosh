@@ -7,7 +7,13 @@ All notable changes to this project. Versions follow [Semantic Versioning](https
 ### Added
 
 - AWDL build guard (ported from ForbiddenItlwm by retropineaple): AWDL only starts when Apple's `IO80211AWDLProtocol` vtable matches at fixed anchor slots and the running kernel is one we verified (15.8.1 24H32 for the Sequoia kext; 26.7.2 25G332 and 26.7.3 25G342 for the Tahoe kext). On any other build the kext acts as if `-itlawdl` was not set, so normal Wi-Fi keeps working. The result is in the IORegistry property `AWDLBuildGuard`. `-itlawdlanybuild` skips the kernel list (not the vtable check).
+- AWDL coex backend, phase 0 (experimental, off by default): `-itlawdlcoex` selects a port of ForbiddenItlwm's coex listener engine (retropineaple, GPL-2.0) instead of the P2P listen path, and switches the P2P path off for that boot. Phase 0 only selects the backend and publishes what the firmware supports (`ITLAWDLCoexFw*`, `AWDLBackend`); AirDrop does not work in this mode yet. Ported helpers and host tests in `include/AWDLCoex/` and `tests/unit/awdlcoex/`.
 - `scripts/check-compat.sh`: a read-only check to run before and after installing. It reports the macOS build and kernel, the Intel Wi-Fi card, the loaded kexts and `awdl0`, the boot arguments, the BLE advertising-sets log line and the pf/netagent state, with OK/WARN/FAIL lines and a verdict. Exit code 1 when something FAILs.
+
+### Fixed
+
+- Block Ack notifications for firmware stations other than the main one were dropped, so such a station's queue was never reclaimed. They are now reclaimed after every record is checked; en0's TX watchdog only follows the main station.
+- `iwx_flush_sta_tids` could read past `sc_tid_data` when the firmware reported the management TID (15) for a flushed queue.
 
 ## [1.0.0-beta.2] - 2026-11-15
 

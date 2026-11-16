@@ -53,6 +53,13 @@ unit() {
                 tests/unit/test_awdl_build_guard.cpp
             [ -x "$tmp/test_awdl_build_guard_$abi" ] && run "$tmp/test_awdl_build_guard_$abi"
         done
+        # AWDL coex backend: host tests ported from ForbiddenItlwm (GPL-2.0, see tests/unit/awdlcoex).
+        for src in tests/unit/awdlcoex/*.cpp; do
+            name=$(basename "$src" .cpp)
+            run c++ -std=c++17 -Wall -Wextra -Werror -I driver/AirportItlwm/include/AWDLCoex \
+                -I driver/AirportItlwm/AirportItlwm -o "$tmp/$name" "$src"
+            [ -x "$tmp/$name" ] && run "$tmp/$name"
+        done
         rm -rf "$tmp"
     else
         echo "skip AWDL build guard test (no c++ compiler)"

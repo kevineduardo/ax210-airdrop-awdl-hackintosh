@@ -131,8 +131,13 @@ inline const char *buildCheckName(BuildCheck c)
 // airportAWDLEnabled(): -itlawdl is set and airportAWDLBuildAllowed(). Every place that used
 //   to read -itlawdl directly calls this instead, so a blocked build behaves exactly like a
 //   boot without -itlawdl.
+// airportAWDLCoexEnabled(): airportAWDLEnabled() and -itlawdlcoex. Selects the coex backend
+//   (ForbiddenItlwm's listener engine) instead of the P2P-device listen path for this boot.
+// airportAWDLBackendName(): "coex", "p2p", "scan" or "none", for the AWDLBackend property.
 bool airportAWDLBuildAllowed();
 const char *airportAWDLBuildStatus();
 bool airportAWDLEnabled();
+bool airportAWDLCoexEnabled();
+const char *airportAWDLBackendName();
 
 #endif /* AirportItlwmAWDLBuildGuard_hpp */

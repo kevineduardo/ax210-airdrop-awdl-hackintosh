@@ -65,6 +65,20 @@ While testing, also add `keepsyms=1 debug=0x100` so a kernel panic leaves a read
 | `-itlawdlidledwell` | off | Shorter listen dwells while AWDL is idle. Halves the gateway latency, but with the firmware's late dwell starts it misses most of what an idle peer sends and discovery can take minutes. Run time: `awdlctl idledwell on/off`. |
 | `itlawdltrustrssi=<n>` | 60 | Peers heard at or above −`n` dBm (range 30 to 95) are trusted for TX gating ("bubble"); weaker peers are not. |
 
+## AirportItlwm: AWDL coex backend (experimental, opt-in)
+
+A second way to run AWDL, ported from [ForbiddenItlwm](https://github.com/retropineaple/ForbiddenItlwm)'s "coex listener" engine. Instead of short P2P listen dwells, the firmware keeps a listener context on its own channel (149 at 80 MHz, else 6 at 20 MHz) next to the Wi-Fi connection the whole time. How it works: [how-awdl-works.md](how-awdl-works.md#the-coex-backend).
+
+It is off unless you add `-itlawdlcoex`. With it, the P2P listen path is switched off for the whole boot: `-itlawdlp2p`, `-itlawdllisten`, `-itlawdltx`, `-itlawdltxpump`, `-itlawdlpromisc` and the other dwell switches above then do nothing, and no `SESSION_PROTECTION_CMD` or `HOT_SPOT_CMD` is sent. The two backends use the same firmware MAC, PHY context and station numbers, so they never run together.
+
+The port lands in phases. What each phase does is listed in [test-results-tahoe.md](test-results-tahoe.md#coex-backend-to-test-on-hardware).
+
+| Boot argument | Default | What it does |
+|---|---|---|
+| `-itlawdlcoex` | off | Selects the coex backend. Needs `-itlawdl` and a build that passes the AWDL build guard. Phase 0: selects the backend, turns the P2P path off and publishes the firmware's capabilities (`ITLAWDLCoexFw*` on the AirportItlwm controller); no listener yet, so AirDrop does not work in this mode. The choice is shown as `AWDLBackend` (`coex`, `p2p`, `scan` or `none`). |
+
+The counters are on the controller: `ioreg -lw0 -r -c AirportItlwm -d1 | grep -E 'AWDLBackend|ITLAWDLCoex'`.
+
 ## AirportItlwm: other switches (inherited from upstream)
 
 | Boot argument | What it does |
