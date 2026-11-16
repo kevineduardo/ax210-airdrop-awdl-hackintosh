@@ -6742,9 +6742,14 @@ static uint8_t
 iwx_get_ctrl_pos(struct ieee80211com *ic, struct ieee80211_channel *c)
 {
 #ifdef AIRPORT_WCL
-    // The coex listener's own context at 80 MHz is only ever in 149-161, centred on 155.
+    // The coex listener's own context at 80 MHz is only ever in 149-161, centred on 155, or (itlawdlcoexchan=)
+    // in 36-48, centred on 42.
     if (awdlCoexPhyWidth == IWX_PHY_VHT_CHANNEL_MODE80 && awdlCoexMulti && awdlPhyBuildingId == kAwdlCoexPhyId) {
         switch (ieee80211_chan2ieee(ic, c)) {
+            case 36: return IWX_PHY_VHT_CTRL_POS_2_BELOW;
+            case 40: return IWX_PHY_VHT_CTRL_POS_1_BELOW;
+            case 44: return IWX_PHY_VHT_CTRL_POS_1_ABOVE;
+            case 48: return IWX_PHY_VHT_CTRL_POS_2_ABOVE;
             case 149: return IWX_PHY_VHT_CTRL_POS_2_BELOW;
             case 153: return IWX_PHY_VHT_CTRL_POS_1_BELOW;
             case 157: return IWX_PHY_VHT_CTRL_POS_1_ABOVE;

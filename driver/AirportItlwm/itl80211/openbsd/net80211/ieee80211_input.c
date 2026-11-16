@@ -2009,6 +2009,14 @@ ieee80211_recv_probe_resp(struct ieee80211com *ic, mbuf_t m,
                 if (!(ic->ic_channels[c].ic_flags & IEEE80211_CHAN_DFS))
                     setbit(ic->ic_beacon_hint, c);
         }
+        /* The same for an AP at VHT80 centred on 42 (36-48), for the coex listener's 44 at 80 MHz. */
+        if (vhtopmode != NULL && chan >= 36 && chan <= 48 &&
+            ((const struct ieee80211_ie_vht_operation *)vhtopmode)->chan_width == 1 &&
+            ((const struct ieee80211_ie_vht_operation *)vhtopmode)->center_freq_seg1_idx == 42) {
+            for (unsigned c = 36; c <= 48; c += 4)
+                if (!(ic->ic_channels[c].ic_flags & IEEE80211_CHAN_DFS))
+                    setbit(ic->ic_beacon_hint, c);
+        }
     }
 
 #ifdef IEEE80211_DEBUG

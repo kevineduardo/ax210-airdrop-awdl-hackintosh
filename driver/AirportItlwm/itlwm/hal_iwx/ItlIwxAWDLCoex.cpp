@@ -37,7 +37,7 @@ static void awdlStopTimers()
 
 // The listener's channel, width and the operating class our frames should advertise, for the AWDL
 // interface (ic_awdl_coex_*). 80 MHz is advertised only while the listener's own context really is at
-// 80 MHz on 149 and no move is pending (ForbiddenItlwm's itlAWDLChannelClass).
+// 80 MHz on 149 (or 44 with itlawdlcoexchan=) and no move is pending (ForbiddenItlwm's itlAWDLChannelClass).
 static void awdlCoexShareChannel()
 {
     struct ieee80211com *ic = awdlCoexIc;
@@ -47,7 +47,7 @@ static void awdlCoexShareChannel()
     ic->ic_awdl_coex_chan = on ? uint8_t(awdlCoexChannel) : 0;
     ic->ic_awdl_coex_width = on && awdlCoexMultiActive && awdlCoexOwnWidth == 80 ? 80 : 20;
     ic->ic_awdl_coex_class = on && awdlCoexMultiActive && awdlCoexOwnWidth == 80 && !awdlCoexMovePending &&
-        awdlFixedChannel == 149 ? 128 : 0;
+        awdlCoexWideBlock(awdlFixedChannel) && awdlFixedChannel == awdlCoexChannel ? 128 : 0;
 }
 
 static void awdlCoexPublish()
@@ -131,6 +131,7 @@ static void awdlCoexPublish()
         root->setProperty("ITLAWDLCoexCountryLastStatus", awdlCoexCountryLastStatus, 32);
         root->setProperty("ITLAWDLCoexCountryLearned", awdlCoexCountryLearned);
         root->setProperty("ITLAWDLCoexBeaconHints", awdlCoexBeaconHints, 32);
+        root->setProperty("ITLAWDLCoexChanPreference", awdlCoexChanPref, 32);
         root->setProperty("ITLAWDLCoexCountryFailures", awdlCoexCountryFailures, 32);
         root->setProperty("ITLAWDLCoexMoveDrainTimeouts", awdlCoexMoveDrainTimeouts, 32);
         root->setProperty("ITLAWDLCoexMovePending", awdlCoexMovePending);
@@ -440,6 +441,11 @@ awdlCoexAttach(struct iwx_softc *sc)
     // Phase 3: the receive Block Ack responder. Off by default while the port is tested (ForbiddenItlwm runs
     // it whenever its data mode is on).
     awdlCoexBaRx = PE_parse_boot_argn("-itlawdlcoexba", &dummy, sizeof(dummy));
+    // Phase 5: the listener's channel preference (see awdlCoexChanPref). Anything else than 149, 44 or 6 is 0.
+    uint32_t chanPref = 0;
+    if (PE_parse_boot_argn("itlawdlcoexchan", &chanPref, sizeof(chanPref)) &&
+        (chanPref == 149 || chanPref == 44 || chanPref == 6))
+        awdlCoexChanPref = chanPref;
     // Phase 4: send Block Ack and A-MPDU (needs the receive side, so it turns it on), the peer pause, the
     // ordering rule and the same-channel probe window. All off by default except the ordering rule, which
     // only matters with send Block Ack.
@@ -497,17 +503,19 @@ awdlCoexPublishFirmware(struct iwx_softc *sc)
 // ---------------------------------------------------------------------------------------------------
 
 // The one channel check for the listener's sending, used before building and again just before sending.
-// The listener's own context at 80 MHz covers 149-161: every one of them has to stay allowed, not only the
-// primary, and the move has to be complete.
+// The listener's own context at 80 MHz covers 149-161 (or 36-48 for 44): every one of them has to stay
+// allowed, not only the primary, and the move has to be complete.
 static bool awdlCoexBlockIneligible(struct ieee80211com *ic, struct ieee80211_channel *channel)
 {
     if (awdlCoexMovePending)
         return true;
     if (!channel || channel != awdlCoexOwnChan || awdlCoexOwnWidth != 80)
         return false;
-    if (!(ic->ic_channels[149].ic_flags & IEEE80211_CHAN_VHT80))
+    const unsigned primary = ieee80211_chan2ieee(ic, channel);
+    const unsigned first = awdlCoexWideBlock(primary);
+    if (!first || !(ic->ic_channels[primary].ic_flags & IEEE80211_CHAN_VHT80))
         return true;
-    for (unsigned ch = 149; ch <= 161; ch += 4) {
+    for (unsigned ch = first; ch <= first + 12; ch += 4) {
         const auto &sub = ic->ic_channels[ch];
         if (!sub.ic_freq || !isset(ic->ic_chan_active, ch) || awdlCoexNoIr(ic, ch) ||
             (sub.ic_flags & (IEEE80211_CHAN_DFS | IEEE80211_CHAN_NOADHOC)))
@@ -617,6 +625,7 @@ awdlCoexMacSend(struct iwx_softc *sc, uint32_t action)
 
 // The listener's own channel: 149 at 80 MHz when the firmware's current channel map lets us start on all of
 // 149-161 (VHT80, no passive, no radar, ad hoc allowed), else 6 at 20 MHz under the same test, else none.
+// itlawdlcoexchan= adds 44 at 80 MHz (all of 36-48 under the same test) and changes the order.
 // 80 MHz is not tried again in a generation where its PHY command failed.
 static int
 awdlCoexPickOwn(struct iwx_softc *sc, uint8_t *width)
@@ -631,6 +640,10 @@ awdlCoexPickOwn(struct iwx_softc *sc, uint8_t *width)
     for (unsigned ch = 149, bit = 1; ch <= 161; ch += 4, bit <<= 1)
         if (isset(ic->ic_beacon_hint, ch))
             hints |= bit;
+    // Bits 5-8: 36, 40, 44, 48.
+    for (unsigned ch = 36, bit = 32; ch <= 48; ch += 4, bit <<= 1)
+        if (isset(ic->ic_beacon_hint, ch))
+            hints |= bit;
     if (hints != awdlCoexBeaconHints) {
         awdlCoexBeaconHints = hints;
         awdlCoexPublish();
@@ -640,18 +653,30 @@ awdlCoexPickOwn(struct iwx_softc *sc, uint8_t *width)
         *width = IWX_PHY_VHT_CHANNEL_MODE20;
         return 6;
     }
-    if (awdlCoexWide80FailedGen != sc->sc_generation && (ic->ic_channels[149].ic_flags & IEEE80211_CHAN_VHT80)) {
-        bool all = true;
-        for (unsigned ch = 149; ch <= 161; ch += 4)
-            all = all && usable(ch);
-        if (all) {
+    auto wideUsable = [&](unsigned primary) {
+        const unsigned first = awdlCoexWideBlock(primary);
+        if (!first || awdlCoexWide80FailedGen == sc->sc_generation ||
+            !(ic->ic_channels[primary].ic_flags & IEEE80211_CHAN_VHT80))
+            return false;
+        for (unsigned ch = first; ch <= first + 12; ch += 4)
+            if (!usable(ch))
+                return false;
+        return true;
+    };
+    static const unsigned kDefaultOrder[] = {149, 6, 0}, kOrder149[] = {149, 44, 6}, kOrder44[] = {44, 149, 6},
+        kOrder6[] = {6, 149, 44};
+    const unsigned *order = awdlCoexChanPref == 149 ? kOrder149 : awdlCoexChanPref == 44 ? kOrder44 :
+        awdlCoexChanPref == 6 ? kOrder6 : kDefaultOrder;
+    for (unsigned i = 0; i < 3 && order[i]; ++i) {
+        if (order[i] == 6) {
+            if (usable(6)) {
+                *width = IWX_PHY_VHT_CHANNEL_MODE20;
+                return 6;
+            }
+        } else if (wideUsable(order[i])) {
             *width = IWX_PHY_VHT_CHANNEL_MODE80;
-            return 149;
+            return int(order[i]);
         }
-    }
-    if (usable(6)) {
-        *width = IWX_PHY_VHT_CHANNEL_MODE20;
-        return 6;
     }
     return 0;
 }
@@ -871,8 +896,8 @@ static void awdlCoexNoteDataFrom(const uint8_t *addr, uint64_t nowUS)
     }
 }
 
-// Moves the listener's own context when the firmware's channel map changes: up to 149 at 80 MHz when it is
-// allowed (at most every 10 s), back down to 6 at once when it is withdrawn. The binding stays; only the PHY
+// Moves the listener's own context when the firmware's channel map changes: up to 149 (or 44) at 80 MHz when
+// it is allowed (at most every 10 s), back down to 6 at once when it is withdrawn. The binding stays; only the PHY
 // context moves, then the listener's MAC context takes the new band's rates.
 void ItlIwx::
 awdlCoexRetarget(struct iwx_softc *sc)
@@ -890,12 +915,12 @@ awdlCoexRetarget(struct iwx_softc *sc)
     const int want = awdlCoexPickOwn(sc, &width);
     const int have = own->channel ? ieee80211_chan2ieee(ic, own->channel) : 0;
     const int haveWidth = awdlCoexOwnWidth;
-    if (!want || (want == have && (want != 149 || haveWidth == 80))) {
+    if (!want || (want == have && (width == IWX_PHY_VHT_CHANNEL_MODE80) == (haveWidth == 80))) {
         awdlCoexMovePending = false;
         return;
     }
     const uint64_t now = awdlUptimeUS();
-    if (want == 149 && awdlCoexLastMoveUS && now - awdlCoexLastMoveUS < 10000000ULL) {
+    if (width == IWX_PHY_VHT_CHANNEL_MODE80 && awdlCoexLastMoveUS && now - awdlCoexLastMoveUS < 10000000ULL) {
         awdlCoexMovePending = false;
         return;
     }

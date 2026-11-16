@@ -379,6 +379,29 @@ Mac to iPhone in A-MPDUs. Test with a 12 MB photo and a 60 MB video, Mac to iPho
 
 Results: not run yet.
 
+### Phase 5: optional additions (each off by default, each tested on its own)
+
+Add each switch to the best set from phase 4 (Set B plus `-itlawdlcoexba -itlawdlcoexbatx -itlawdlcoexpeerpause`) and compare with that set.
+
+#### 44 at 80 MHz (`itlawdlcoexchan=149`, then `itlawdlcoexchan=44`)
+
+For this machine first: in Portugal, with the AP on channel 100 (DFS), 149 to 161 may stay passive. Check phase 1's `ITLAWDLCoexChannel` first.
+
+| Check | Command or key | Expected |
+|---|---|---|
+| Switch seen | `ITLAWDLCoexChanPreference` | `149` or `44` |
+| Where 149 works (`ITLAWDLCoexChannel = 149` in phase 1) | boot with `itlawdlcoexchan=149` | Same as phase 4: `ITLAWDLCoexChannel = 149`, `ITLAWDLCoexOwnWidth = 80` (44 is only a fallback) |
+| Where phase 1 ended on 6 | boot with `itlawdlcoexchan=149` | `ITLAWDLCoexChannel = 44`, `ITLAWDLCoexOwnWidth = 80`, `ITLAWDLCoexMultiState = "own-channel"`, `ITLAWDLCoexPhyResult = 1`. If it stays on 6, record `ITLAWDLCoexBeaconHints` (bits 5 to 8 are 36, 40, 44, 48) and `ITLAWDLCoexCountryLearned`: 36 to 48 are passive too, and an AP beaconing there at 80 MHz (centre 42) or on each of them is needed |
+| 44 first | boot with `itlawdlcoexchan=44` | `ITLAWDLCoexChannel = 44`, `OwnWidth = 80` whenever 36 to 48 are allowed |
+| Frames name 44 | `ioreg -lw0 -r -c AirportItlwmAWDLInterface -d1 \| grep -E 'AWDLRxChan\|AWDLPeers'`; the iPhone's sequence `ITLAWDLCoexPeerSequence` | The iPhone puts some of its slots on 44 (`2c` in the sequence bytes); `ITLAWDLCoexPeerPresentEntries` 5 or more during data |
+| Sending allowed | `ITLAWDLCoexRefusedReason` | `0` while sending (not 2 passive, 4 DFS) |
+| Rates | `ITLAWDLCoexRateStep`, `ITLAWDLCoexBaTxVht80TwoStreamNotifs`, `ITLAWDLCoexRxVht80TwoStream` | VHT 80 MHz two streams both ways, as on 149 |
+| Moves | `ITLAWDLCoexMoves`, `ITLAWDLCoexMoveFailures`, kernel log | Moves between 44 and 149 are in the same band (PHY MODIFY); a move from 6 to 44 crosses bands, watch for firmware errors as in phase 1 |
+| Speed | 12 MB and 60 MB both ways | Record. Expected close to phase 4 on 149 when the iPhone is idle; 6 at 20 MHz is the number to beat |
+| Wi-Fi | `networkQuality -s` | Record. en0 on 100 and the listener on 44 share the 5 GHz radio as with 149 |
+
+Results: not run yet.
+
 ## OpenCore requirements for Tahoe
 
 - `Kernel > Quirks > PowerTimeoutKernelPanic = false`. On kernel 25.6 the quirk falls back to replacing the kernel's first `"com.apple\0"` with `"not.apple\0"`, which breaks pf anchor checks, turns off Skywalk's transport agent and breaks QUIC pacing.

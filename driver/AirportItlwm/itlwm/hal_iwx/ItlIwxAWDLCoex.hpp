@@ -104,6 +104,17 @@ static uint16_t awdlCoexHintCountry;
 static uint32_t awdlCoexCountryUnusableAnswers, awdlCoexHintClears;
 // The channel our frames name (ForbiddenItlwm's awdlFixedChannel).
 static unsigned awdlFixedChannel = 6;
+// Phase 5 (ours): itlawdlcoexchan=N, the listener's channel preference. 0, the default, keeps ForbiddenItlwm's
+// order (149 at 80 MHz, then 6 at 20 MHz). 149: the same, with 44 at 80 MHz tried before 6. 44: 44 at 80 MHz
+// first, then 149, then 6. 6: 6 first, then 149, then 44. Where 149 to 161 are passive (no AP heard there) or
+// not allowed at 80 MHz, 36 to 48 often are usable, and the iPhone itself puts its own slots on 44.
+static unsigned awdlCoexChanPref;
+// The first channel of the 80 MHz block a wide primary sits in (36 for 36 to 48, 149 for 149 to 161), else 0.
+static inline unsigned awdlCoexWideBlock(unsigned primary)
+{
+    return primary >= 36 && primary <= 48 && primary % 4 == 0 ? 36 :
+        primary >= 149 && primary <= 161 && (primary - 149) % 4 == 0 ? 149 : 0;
+}
 
 static bool awdlCoexAdded;
 // itlawdlcoexfilter in ForbiddenItlwm. 1: AWDL's BSSID with group frames, no promiscuous mode.
