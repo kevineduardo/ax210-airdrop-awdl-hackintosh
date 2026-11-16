@@ -136,9 +136,74 @@ static bool awdlCoexTxStaAdded, awdlCoexInFlight, awdlCoexTxHalted;
 static int awdlCoexQueue = -1, awdlCoexPendingSlot = -1, awdlCoexOrphanQueue = -1;
 static uint32_t awdlCoexTxSetupTried;
 constexpr uint32_t kAwdlCoexTxSetupTries = 3;
-// Block Ack with the peer (later phases of the port). Always off here.
+// Phase 3: receive Block Ack (-itlawdlcoexba). The iPhone's ADDBA request gets a firmware station for the
+// peer (station 3, bound to the listener's MAC context) and a firmware session, then an answer from the
+// listener's queue. While a session is open, promiscuous receive is off: the firmware doesn't acknowledge a
+// session's frames with it on. Off by default during the rollout (ForbiddenItlwm runs it with its data mode).
+constexpr uint8_t kAwdlBaStationId = 3;
+static bool awdlCoexBaRx;
 static bool awdlCoexBaPeerAdded, awdlCoexBaFilterOff;
 static uint8_t awdlCoexBaPeer[6];
+static ItlAWDL::PendingAddbaRequests awdlCoexBaRequestsPending;
+static uint8_t awdlCoexBaTidToken[8];
+static uint8_t awdlCoexBaTids;
+static int awdlCoexBaFailedGen = -1, awdlCoexBaGen = -1;
+static uint32_t awdlCoexBaRequests, awdlCoexBaSessions, awdlCoexBaAnswers, awdlCoexBaAnswerErrors,
+    awdlCoexBaOtherPeer, awdlCoexBaDelbas, awdlCoexBaStatus, awdlCoexBaFilterChanges;
+static uint8_t awdlCoexBaAnswer[ItlAWDL::kAddbaResponseLength];
+static size_t awdlCoexBaAnswerLength;
+static uint8_t awdlCoexBaAnswerTid;
+static uint64_t awdlCoexBaAnswerRetryUS;
+static uint16_t awdlCoexBaSequence;
+static ItlAWDL::BaFilterState awdlCoexBaFilter;
+// The width the last peer station was added with (80 or 20; 0 before the first).
+static uint32_t awdlCoexBaPeerWidth;
+// Our management frames (ADDBA answers and requests, DELBA) are tagged per ring slot so they never count
+// toward the data rate, and so each one pairs with its own completion.
+enum { kCoexSlotBaAnswer = 3, kCoexSlotBaAsk, kCoexSlotDelba };
+static uint8_t awdlCoexSendingMgmt, awdlCoexSendingMgmtToken;
+// The iPhone acknowledged our ADDBA answer.
+static bool awdlCoexBaPeerAccepted;
+// Bumped on every peer station add: completions and queue owners from an older peer are recognised.
+static uint32_t awdlCoexBaPeerEpoch;
+static uint32_t awdlCoexMgmtOK, awdlCoexMgmtFailed;
+// DELBA from the iPhone for its own session, or our idle teardown: those TIDs are removed from the firmware
+// on the next pass.
+static uint8_t awdlCoexBaTidTeardown;
+static uint64_t awdlCoexBaPeerLastUS;
+// Block Ack action frames to our AWDL address, by whether they carry AWDL's BSSID.
+static uint32_t awdlCoexBaActionAwdlBssid, awdlCoexBaActionOtherBssid, awdlCoexRxWhileFilterOff;
+static uint64_t awdlCoexBaLastRxPayloadUS;
+static uint32_t awdlCoexBaRxIdleTeardowns, awdlCoexBaDelbasSent;
+static uint8_t awdlCoexBaRxIdleTids;
+// Idle receive teardown: the session is removed only after the iPhone acknowledges our DELBA, or after three
+// failed tries or a 3 s deadline. Keyed by firmware generation, peer epoch and TID.
+static uint32_t awdlCoexDelbaTries, awdlCoexDelbaForced, awdlCoexDelbaConfirmed, awdlCoexDelbaFailedTx;
+static int awdlCoexDelbaWaitTid = -1, awdlCoexDelbaWaitGen = -1;
+static uint32_t awdlCoexDelbaWaitEpoch;
+static uint16_t awdlCoexDelbaAttemptId;
+static uint8_t awdlCoexDelbaResult; // 0 none or pending, 1 acknowledged, 2 failed.
+static uint64_t awdlCoexDelbaDeadlineUS, awdlCoexDelbaNextTryUS;
+// Last QoS data from the BA peer per TID: a receive session is idle only when its own TID is.
+static uint64_t awdlCoexBaRxTidLastUS[8];
+static uint32_t awdlCoexBaNonAwdlBssidAccepted, awdlCoexBaNonAwdlBssidApplied, awdlCoexDelbaRxTidRemoved;
+static uint32_t awdlCoexRxVht80TwoStream;
+// Per-enqueue identity for listener management frames, kept with the slot (see awdlCoexNoteSubmitted).
+static uint16_t awdlCoexMgmtEnqueueId, awdlCoexLastMgmtEnqueueId;
+// Block Ack event log (types as in ForbiddenItlwm: A ask, a ask done, R answer, B BA action to us, Q request,
+// q our answer done, d our DELBA done, D peer DELBA, L our DELBA sent, F forced teardown, S send state,
+// X peer retired, P probe window, u reclaimed without status). Recorded always, published with
+// -itlawdlcoexbatrace (phase 5).
+struct AwdlCoexBaEvent { uint32_t ms; char type; uint16_t a, b; uint8_t c; uint16_t d, id; };
+static AwdlCoexBaEvent awdlCoexBaEvents[256], awdlCoexBaEventsFirst[64];
+static uint32_t awdlCoexBaEventCount;
+// Ours, for phase 5's decision on a host reorder buffer: the order the BA peer's QoS data arrives in. The
+// firmware acknowledges the session's frames; the host hands them to awdl0 in arrival order, as ForbiddenItlwm
+// does. A fresh sequence number behind the highest one seen on its TID counts as out of order.
+static ItlAWDL::RxSequenceTracker awdlCoexRxSeq;
+static uint16_t awdlCoexRxSeqHigh[8];
+static uint8_t awdlCoexRxSeqHighKnown;
+static uint32_t awdlCoexRxSeqOutOfOrder, awdlCoexRxSeqMaxBehind;
 
 // Receive.
 static uint32_t awdlCoexForwarded, awdlCoexForwardRefused, awdlCoexForwardMalformed;
@@ -211,8 +276,12 @@ static uint32_t awdlCoexIdleSyncFrames;
 // only says how far to reclaim. Slots reclaimed without their own status are counted, not credited.
 static uint32_t awdlCoexStatusIdxHits, awdlCoexStatusIdxMisses, awdlCoexMultiReclaims, awdlCoexReclaimUnknown,
     awdlCoexSyncReclaimedUnknown;
-// Per ring slot: 1 for a group data frame, 2 for unicast, so completions say whether the peer acknowledged us.
+// Per ring slot: 1 for a group data frame, 2 for unicast, so completions say whether the peer acknowledged us;
+// 3 to 5 for our Block Ack management frames (kCoexSlotBaAnswer and after).
 static uint8_t awdlCoexSlotKind[IWX_MIN_256_BA_QUEUE_SIZE_GEN3];
+static uint32_t awdlCoexSlotBaPeerEpoch[nitems(awdlCoexSlotKind)];
+static uint8_t awdlCoexSlotToken[nitems(awdlCoexSlotKind)]; // Dialog token (ADDBA) or TID (DELBA) per slot.
+static uint16_t awdlCoexSlotEnqueueId[nitems(awdlCoexSlotKind)];
 static uint32_t awdlCoexUcastOK, awdlCoexUcastFailed, awdlCoexGroupOK, awdlCoexGroupFailed;
 // Unicast data rate for our frames: 0 legacy 24 Mbit/s, then HT MCS 4, 5, 7 (20 MHz, one stream). Steps
 // down after a window with over 20% failures, up after one with under 5%. Steps 4 and 5 are VHT 80 MHz,
@@ -257,5 +326,7 @@ static void awdlCoexPublish();
 static void awdlCoexAddrSyncWanted();
 static void awdlCoexNoteSubmitted(struct iwx_softc *, int qid, int idx, const struct ieee80211_frame *);
 static bool awdlCoexOwnsRing(const struct iwx_tx_ring *);
+static bool awdlVht80TwoStream(uint32_t rate);
+static mbuf_t awdlCoexFrameMbuf(const uint8_t *bytes, size_t length);
 
 #endif /* ItlIwxAWDLCoex_hpp */

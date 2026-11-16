@@ -206,7 +206,83 @@ static void awdlCoexPublish()
         root->setProperty("ITLAWDLCoexPeerSequenceChanges", awdlCoexPeerSchedule.sequenceChanges, 32);
         root->setProperty("ITLAWDLCoexPeerDecalibrations", awdlCoexPeerSchedule.decalibrations, 32);
     }
+    if (awdlCoexBaRx) {
+        root->setProperty("ITLAWDLCoexBaRx", true);
+        root->setProperty("ITLAWDLCoexBaRequests", awdlCoexBaRequests, 32);
+        root->setProperty("ITLAWDLCoexBaSessions", awdlCoexBaSessions, 32);
+        root->setProperty("ITLAWDLCoexBaAnswers", awdlCoexBaAnswers, 32);
+        root->setProperty("ITLAWDLCoexBaAnswerErrors", awdlCoexBaAnswerErrors, 32);
+        root->setProperty("ITLAWDLCoexBaOtherPeer", awdlCoexBaOtherPeer, 32);
+        root->setProperty("ITLAWDLCoexBaDelbas", awdlCoexBaDelbas, 32);
+        root->setProperty("ITLAWDLCoexBaStatus", awdlCoexBaStatus, 32);
+        root->setProperty("ITLAWDLCoexBaTids", uint32_t(awdlCoexBaTids), 32);
+        root->setProperty("ITLAWDLCoexBaPeerAdded", awdlCoexBaPeerAdded);
+        root->setProperty("ITLAWDLCoexBaPeerWidth", awdlCoexBaPeerWidth, 32);
+        root->setProperty("ITLAWDLCoexBaPeerAccepted", awdlCoexBaPeerAccepted);
+        root->setProperty("ITLAWDLCoexBaFilterOff", awdlCoexBaFilterOff);
+        root->setProperty("ITLAWDLCoexBaFilterChanges", awdlCoexBaFilterChanges, 32);
+        root->setProperty("ITLAWDLCoexBaBroken", awdlCoexBaFailedGen >= 0 && awdlCoexBaFailedGen == awdlCoexGeneration);
+        root->setProperty("ITLAWDLCoexMgmtOK", awdlCoexMgmtOK, 32);
+        root->setProperty("ITLAWDLCoexMgmtFailed", awdlCoexMgmtFailed, 32);
+        root->setProperty("ITLAWDLCoexBaActionAwdlBssid", awdlCoexBaActionAwdlBssid, 32);
+        root->setProperty("ITLAWDLCoexBaActionOtherBssid", awdlCoexBaActionOtherBssid, 32);
+        root->setProperty("ITLAWDLCoexBaNonAwdlBssidAccepted", awdlCoexBaNonAwdlBssidAccepted, 32);
+        root->setProperty("ITLAWDLCoexBaNonAwdlBssidApplied", awdlCoexBaNonAwdlBssidApplied, 32);
+        root->setProperty("ITLAWDLCoexRxWhileFilterOff", awdlCoexRxWhileFilterOff, 32);
+        root->setProperty("ITLAWDLCoexRxVht80TwoStream", awdlCoexRxVht80TwoStream, 32);
+        root->setProperty("ITLAWDLCoexBaRxIdleTeardowns", awdlCoexBaRxIdleTeardowns, 32);
+        root->setProperty("ITLAWDLCoexBaDelbasSent", awdlCoexBaDelbasSent, 32);
+        root->setProperty("ITLAWDLCoexDelbaForced", awdlCoexDelbaForced, 32);
+        root->setProperty("ITLAWDLCoexDelbaConfirmed", awdlCoexDelbaConfirmed, 32);
+        root->setProperty("ITLAWDLCoexDelbaFailedTx", awdlCoexDelbaFailedTx, 32);
+        root->setProperty("ITLAWDLCoexDelbaRxTidRemoved", awdlCoexDelbaRxTidRemoved, 32);
+        root->setProperty("ITLAWDLCoexBaEventCount", awdlCoexBaEventCount, 32);
+        // Arrival order of the BA peer's QoS data (phase 5 decides on a host reorder buffer from these).
+        root->setProperty("ITLAWDLCoexRxSeqFrames", awdlCoexRxSeq.counts.frames, 32);
+        root->setProperty("ITLAWDLCoexRxSeqFresh", awdlCoexRxSeq.counts.fresh, 32);
+        root->setProperty("ITLAWDLCoexRxSeqDuplicates", awdlCoexRxSeq.counts.repeats, 32);
+        root->setProperty("ITLAWDLCoexRxSeqRetryFresh", awdlCoexRxSeq.counts.retryBitFresh, 32);
+        root->setProperty("ITLAWDLCoexRxSeqOutOfOrder", awdlCoexRxSeqOutOfOrder, 32);
+        root->setProperty("ITLAWDLCoexRxSeqMaxBehind", awdlCoexRxSeqMaxBehind, 32);
+    }
     root->setProperty("ITLAWDLCoexReclaimRefused", awdlReclaimRefused, 32);
+}
+
+// Block Ack event log entry (see AwdlCoexBaEvent). The first 64 of the boot are also kept apart.
+static void awdlCoexBaEvent(char type, unsigned a, unsigned b, unsigned c, unsigned d = 0, unsigned id = 0)
+{
+    const AwdlCoexBaEvent e{uint32_t(awdlUptimeUS() / 1000ULL), type, uint16_t(a), uint16_t(b), uint8_t(c),
+                            uint16_t(d), uint16_t(id)};
+    if (awdlCoexBaEventCount < nitems(awdlCoexBaEventsFirst))
+        awdlCoexBaEventsFirst[awdlCoexBaEventCount] = e;
+    awdlCoexBaEvents[awdlCoexBaEventCount++ % nitems(awdlCoexBaEvents)] = e;
+}
+
+// The BA peer's QoS data, in arrival order: duplicates, and fresh numbers that arrive behind the highest seen
+// on their TID (by up to half the sequence space), for the reorder decision. Diagnostics only.
+static void awdlCoexNoteRxSequence(const uint8_t *cf, size_t length)
+{
+    if (length < 26 || (cf[0] & 0xf0) != 0x80)
+        return;
+    const unsigned tid = cf[24] & 7U;
+    const uint16_t seq = uint16_t((cf[22] | cf[23] << 8) >> 4);
+    if (!awdlCoexRxSeq.note(tid, seq, (cf[1] & 0x08) != 0, length))
+        return;
+    const uint8_t bit = uint8_t(1U << tid);
+    if (!(awdlCoexRxSeqHighKnown & bit)) {
+        awdlCoexRxSeqHighKnown |= bit;
+        awdlCoexRxSeqHigh[tid] = seq;
+        return;
+    }
+    const uint16_t ahead = uint16_t((seq - awdlCoexRxSeqHigh[tid]) & 0xfff);
+    if (ahead && ahead < 2048) {
+        awdlCoexRxSeqHigh[tid] = seq;
+    } else if (ahead) {
+        const uint32_t behind = 4096U - ahead;
+        ++awdlCoexRxSeqOutOfOrder;
+        if (behind > awdlCoexRxSeqMaxBehind)
+            awdlCoexRxSeqMaxBehind = behind;
+    }
 }
 
 // Passive (no initiating) for the listener: the NVM's passive flag, unless a beaconing AP was heard on that
@@ -301,6 +377,9 @@ awdlCoexAttach(struct iwx_softc *sc)
     awdlCoexShared = PE_parse_boot_argn("-itlawdlcoexshared", &dummy, sizeof(dummy));
     awdlCoexMulti = !awdlCoexShared;
     awdlCoexSameBand = PE_parse_boot_argn("-itlawdlsameband", &dummy, sizeof(dummy));
+    // Phase 3: the receive Block Ack responder. Off by default while the port is tested (ForbiddenItlwm runs
+    // it whenever its data mode is on).
+    awdlCoexBaRx = PE_parse_boot_argn("-itlawdlcoexba", &dummy, sizeof(dummy));
     // Data needs promiscuous receive on the listener's own channel; see awdlCoexMacSend.
     awdlCoexFilter = 3;
     awdlCoexMultiState = awdlCoexMulti ? "not-added" : "off";
@@ -613,14 +692,6 @@ awdlCoexCountryAnswer(struct iwx_softc *sc)
     if (awdlCoexCountryNotice == mcc && awdlCoexCountrySource == source)
         awdlCoexCountryPending = false;
     awdlCoexPublish();
-}
-
-// Block Ack with the peer is a later phase of the port: nothing to remove yet.
-int ItlIwx::
-awdlCoexBaRemovePeer(struct iwx_softc *sc)
-{
-    awdlCoexBaPeerAdded = false;
-    return 0;
 }
 
 // The listener's station and queue (phase 2). Nothing to tear down until awdlCoexTxSetup made them.
@@ -1308,8 +1379,11 @@ awdlCoexTxTask(void *arg)
             that->awdlCoexTxSend(sc);
         }
         if (awdlCoexData && !awdlStopping && awdlCoexAdded) {
-            // (Block Ack handling and the peer pause are later phases of the port.)
-            that->awdlCoexDataPump(sc);
+            if (awdlCoexBaRx)
+                that->awdlCoexBaHandle(sc);
+            // Block Ack handling waits on the firmware: the listener may be gone after it.
+            if (!awdlStopping && awdlCoexAdded && awdlCoexGeneration == sc->sc_generation)
+                that->awdlCoexDataPump(sc);
         }
         const uint64_t publishNow = awdlUptimeUS();
         if (!awdlStopping && publishNow - awdlCoexLastRoutinePublishUS >= 1000000ULL) {
@@ -1326,6 +1400,62 @@ awdlCoexTxTask(void *arg)
             nextMS = 1;  // Holding for the phone: look again as soon as it may be back.
         timeout_add_msec(&awdlCoexTxTimer, nextMS);
     }
+}
+
+// Block Ack action frames to us that aren't AWDL's own format, from a peer heard on our channel (receive hook):
+// the iPhone's ADDBA request, and its DELBA for its own session. Queued for awdlCoexBaHandle.
+static void awdlCoexBaRxAction(const uint8_t *cf, size_t coexLen, bool awdlFrame)
+{
+    ItlAWDL::AddbaRequest request;
+    bool delbaPeerWasSender = false;
+    uint8_t delbaTid = 0;
+    if (ItlAWDL::parseAddbaRequest(cf, coexLen, awdlCoexAddr, &request) && awdlFrame) {
+        ++awdlCoexBaRequests;
+        awdlCoexBaEvent('Q', request.token, request.tid, 0);
+        if (request.immediate) {
+            if ((awdlCoexBaPeerAdded && !ItlAWDL::sameAddress(request.peer, awdlCoexBaPeer)) ||
+                !awdlCoexBaRequestsPending.note(request)) {
+                ++awdlCoexBaOtherPeer;
+            } else if (awdlCoexBaAnswerLength && awdlCoexBaAnswerTid == request.tid &&
+                       awdlCoexBaAnswer[26] != request.token) {
+                awdlCoexBaAnswerLength = 0;
+            }
+        }
+    } else if (ItlAWDL::parseDelba(cf, coexLen, awdlCoexAddr, &delbaPeerWasSender, &delbaTid) &&
+               delbaTid < 8 && awdlCoexBaPeerAdded && ItlAWDL::sameAddress(cf + 10, awdlCoexBaPeer)) {
+        awdlCoexBaEvent('D', delbaTid, delbaPeerWasSender ? 1 : 0, awdlFrame ? 1 : 0);
+        if (!awdlFrame)
+            ++awdlCoexBaNonAwdlBssidAccepted;
+        if (delbaPeerWasSender) {
+            if (!awdlFrame && (awdlCoexBaTids & (1U << delbaTid)))
+                ++awdlCoexBaNonAwdlBssidApplied;
+            // A later request on this TID can be handled once removal finishes.
+            awdlCoexBaRequestsPending.discard(delbaTid);
+            if (awdlCoexBaAnswerLength && awdlCoexBaAnswerTid == delbaTid)
+                awdlCoexBaAnswerLength = 0;
+            awdlCoexBaRxIdleTids &= uint8_t(~(1U << delbaTid));
+            // Its session for sending to us: removed from the firmware on the next pass.
+            ++awdlCoexBaDelbas;
+            awdlCoexBaTidTeardown |= uint8_t(1U << delbaTid);
+        }
+    }
+}
+
+// Data from the Block Ack peer (receive hook): it is alive, its sessions are busy, and its arrival order.
+static void awdlCoexNoteBaPeerData(const uint8_t *cf, size_t dataLen)
+{
+    if (!awdlCoexBaPeerAdded || !ItlAWDL::sameAddress(cf + 10, awdlCoexBaPeer))
+        return;
+    awdlCoexBaPeerLastUS = awdlUptimeUS();
+    // Directed traffic from the peer keeps it known, even when its action frames go unheard.
+    if (awdlCoexAddrKnown && ItlAWDL::sameAddress(cf + 4, awdlCoexAddr))
+        (void)awdlCoexPeerKnown(cf + 10, awdlCoexBaPeerLastUS, true);
+    if (!(cf[4] & 1) && dataLen >= 1200)
+        awdlCoexBaLastRxPayloadUS = awdlCoexBaPeerLastUS;
+    if ((cf[0] & 0xf0) == 0x80 && dataLen >= 26) // QoS data: TID in the QoS control field.
+        awdlCoexBaRxTidLastUS[cf[24] & 7] = awdlCoexBaPeerLastUS;
+    if (!(cf[4] & 1))
+        awdlCoexNoteRxSequence(cf, dataLen);
 }
 
 // Receive hook, from iwx_rx_frame before net80211 sees the frame. Frames with AWDL's BSSID (and Block Ack
@@ -1347,8 +1477,16 @@ awdlCoexRxHook(struct iwx_softc *sc, mbuf_t m, int chanidx, bool chanValid, int 
         // A Block Ack action frame to our AWDL address is ours whatever BSSID it carries.
         const bool baToUs = cf[0] == 0xd0 && mbuf_len(m) >= 26 && cf[24] == 3 && awdlCoexAddrKnown &&
             ItlAWDL::sameAddress(cf + 4, awdlCoexAddr);
-        if (baToUs)
+        if (baToUs) {
             ++awdlCoexBaActionSeen[cf[25] < 3 ? cf[25] : 3];
+            awdlCoexBaEvent('B', cf[25], awdlCoexBaPeerAdded && ItlAWDL::sameAddress(cf + 10, awdlCoexBaPeer) ? 1 : 0,
+                            awdlFrame ? 1 : 0,
+                            (chanValid && unsigned(chanidx) == awdlCoexChannel ? 1U : 0U) |
+                            (awdlCoexPeerKnown(cf + 10, awdlUptimeUS()) ? 2U : 0U));
+            ++(awdlFrame ? awdlCoexBaActionAwdlBssid : awdlCoexBaActionOtherBssid);
+        }
+        if (awdlCoexBaFilterOff && (cf[0] & 0x0c) == 0x08 && awdlFrame)
+            ++awdlCoexRxWhileFilterOff;
         if ((awdlFrame || baToUs) && cf[0] == 0xd0) {
             ++awdlCoexAwdlAction;
             ++(chanValid && unsigned(chanidx) == awdlCoexChannel ? awdlCoexActionOnChannel : awdlCoexActionOffChannel);
@@ -1394,8 +1532,11 @@ awdlCoexRxHook(struct iwx_softc *sc, mbuf_t m, int chanidx, bool chanValid, int 
                 else
                     ++awdlCoexForwardRefused;
             } else if (awdlCoexRx) {
-                // Not AWDL's own format: a Block Ack request or teardown (a later phase of the port).
                 ++awdlCoexForwardMalformed;
+                // Not AWDL's own format: a Block Ack request or teardown to our address, from a peer we hear.
+                if (awdlCoexBaRx && awdlCoexData && awdlCoexAddrKnown && !mbuf_next(m) && chanValid &&
+                    unsigned(chanidx) == awdlCoexChannel && awdlCoexPeerKnown(cf + 10, awdlUptimeUS()))
+                    awdlCoexBaRxAction(cf, coexLen, awdlFrame);
             }
         } else if (awdlFrame && (cf[0] & 0x0c) == 0x08) {
             ++awdlCoexAwdlData;
@@ -1408,6 +1549,8 @@ awdlCoexRxHook(struct iwx_softc *sc, mbuf_t m, int chanidx, bool chanValid, int 
                 ++awdlCoexRxModulation[(uint32_t(rate_n_flags) & IWX_RATE_MCS_MOD_TYPE_MSK) >> IWX_RATE_MCS_MOD_TYPE_POS];
                 if ((uint32_t(rate_n_flags) & IWX_RATE_MCS_CHAN_WIDTH_MSK) == IWX_RATE_MCS_CHAN_WIDTH_80)
                     ++awdlCoexRxWide80;
+                if (awdlVht80TwoStream(uint32_t(rate_n_flags)))
+                    ++awdlCoexRxVht80TwoStream;
             }
             if (awdlCoexDataRxOn && !mbuf_next(m)) {
                 ++awdlCoexDataRx;
@@ -1423,6 +1566,7 @@ awdlCoexRxHook(struct iwx_softc *sc, mbuf_t m, int chanidx, bool chanValid, int 
                     if (ItlAWDL::parseDataFrame(cf, dataLen, false, &view) != ItlAWDL::ParseResult::Valid)
                         ++awdlCoexDataRxNotIPv6;
                     awdlCoexNoteDataFrom(cf + 10, awdlUptimeUS());
+                    awdlCoexNoteBaPeerData(cf, dataLen);
                     awdlCoexLastDataUS = awdlUptimeUS();
                     // The data handler takes the mbuf when it returns non-zero.
                     if (ic->ic_awdl_data_handler && ic->ic_awdl_data_handler(ic, m, rxi)) {
@@ -1801,7 +1945,9 @@ awdlCoexTxAllowed(struct iwx_softc *sc, mbuf_t m, int qid)
         sc->sc_ic.ic_opmode == IEEE80211_M_STA && sc->sc_ic.ic_state == IEEE80211_S_RUN && !mbuf_next(m) &&
         mbuf_len(m) == mbuf_pkthdr_len(m) && mbuf_len(m) <= 2304 &&
         (awdlCoexSendingData ?
-            awdlCoexData && ItlAWDL::parseDataFrame(bytes, mbuf_len(m), false, &data) == ItlAWDL::ParseResult::Valid :
+            awdlCoexData && (ItlAWDL::parseDataFrame(bytes, mbuf_len(m), false, &data) == ItlAWDL::ParseResult::Valid ||
+                             (awdlCoexSendingMgmt && (ItlAWDL::isAddbaFrame(bytes, mbuf_len(m)) ||
+                                                      ItlAWDL::isDelbaFrame(bytes, mbuf_len(m))))) :
             ItlAWDL::parseAction(bytes, mbuf_len(m), &decoded) == ItlAWDL::ParseResult::Valid);
     if (!ok)
         mbuf_freem(m);
@@ -1888,6 +2034,8 @@ awdlCoexTxDone(struct iwx_softc *sc, struct iwx_rx_packet *pkt, struct iwx_tx_re
         if (freed == 1)
             statusSlot = ring->tail;
     }
+    const unsigned reclaimCount = MIN(unsigned(freed), 255U);
+    const unsigned statusSource = unsigned(pkt->hdr.idx) | (indexed ? 0U : 0x100U);
     if (freed > 1)
         ++awdlCoexMultiReclaims;
     bool attributed = false;
@@ -1905,17 +2053,29 @@ awdlCoexTxDone(struct iwx_softc *sc, struct iwx_rx_packet *pkt, struct iwx_tx_re
                 ++awdlCoexSyncReclaimedUnknown; // Reclaimed; its own status isn't in this response.
             }
         }
-        if (!awdlCoexDataTx || qid != awdlCoexQueue || slot >= int(nitems(awdlCoexSlotKind)) ||
+        if ((!awdlCoexDataTx && !awdlCoexMgmtEnqueueId) || qid != awdlCoexQueue ||
+            slot >= int(nitems(awdlCoexSlotKind)) ||
             !awdlCoexSlotKind[slot])
             continue;
         const uint8_t kind = awdlCoexSlotKind[slot];
         awdlCoexSlotKind[slot] = 0;
+        const bool sameEpoch = awdlCoexBaPeerAdded && awdlCoexSlotBaPeerEpoch[slot] == awdlCoexBaPeerEpoch;
+        const bool delbaAttempt = kind == kCoexSlotDelba && sameEpoch &&
+            awdlCoexDelbaWaitGen == sc->sc_generation && awdlCoexDelbaWaitEpoch == awdlCoexBaPeerEpoch &&
+            awdlCoexDelbaWaitTid == int(awdlCoexSlotToken[slot]) &&
+            awdlCoexDelbaAttemptId == awdlCoexSlotEnqueueId[slot];
         if (!own) {
             ++awdlCoexReclaimUnknown;
+            if (kind >= kCoexSlotBaAnswer)
+                awdlCoexBaEvent('u', kind, awdlCoexSlotToken[slot], reclaimCount, statusSource,
+                                awdlCoexSlotEnqueueId[slot]);
+            if (delbaAttempt)
+                awdlCoexDelbaResult = 2; // Unknown result: eligible for a bounded retry.
             continue;
         }
         attributed = true;
-        ++(ok ? awdlCoexDataOK : awdlCoexDataFailed);
+        if (kind < kCoexSlotBaAnswer)
+            ++(ok ? awdlCoexDataOK : awdlCoexDataFailed);
         if (kind == 2) {
             ++(ok ? awdlCoexUcastOK : awdlCoexUcastFailed);
             ++(ok ? awdlCoexRateWindowOK : awdlCoexRateWindowFailed);
@@ -1933,6 +2093,18 @@ awdlCoexTxDone(struct iwx_softc *sc, struct iwx_rx_packet *pkt, struct iwx_tx_re
             }
         } else if (kind == 1) {
             ++(ok ? awdlCoexGroupOK : awdlCoexGroupFailed);
+        } else if (kind >= kCoexSlotBaAnswer) {
+            ++(ok ? awdlCoexMgmtOK : awdlCoexMgmtFailed);
+            awdlCoexBaEvent(kind == kCoexSlotBaAsk ? 'a' : kind == kCoexSlotDelba ? 'd' : 'q',
+                            awdlCoexSlotToken[slot], ok ? 1 : 0, reclaimCount, statusSource,
+                            awdlCoexSlotEnqueueId[slot]);
+            if (kind == kCoexSlotBaAnswer && ok && sameEpoch) {
+                awdlCoexBaPeerAccepted = true; // Only an acknowledged ADDBA answer counts.
+            } else if (delbaAttempt) {
+                awdlCoexDelbaResult = ok ? 1 : 2;
+                if (!ok)
+                    ++awdlCoexDelbaFailedTx;
+            }
         }
     }
     if (!attributed)
@@ -1945,8 +2117,18 @@ static void awdlCoexNoteSubmitted(struct iwx_softc *sc, int qid, int idx, const 
 {
     if (qid != awdlCoexQueue || awdlCoexQueue < 0)
         return;
-    if (idx >= 0 && idx < int(nitems(awdlCoexSlotKind)))
-        awdlCoexSlotKind[idx] = awdlCoexSendingData ? (IEEE80211_IS_MULTICAST(wh->i_addr1) ? 1 : 2) : 0;
+    if (idx >= 0 && idx < int(nitems(awdlCoexSlotKind))) {
+        awdlCoexSlotKind[idx] = awdlCoexSendingMgmt ? awdlCoexSendingMgmt :
+            awdlCoexSendingData ? (IEEE80211_IS_MULTICAST(wh->i_addr1) ? 1 : 2) : 0;
+        awdlCoexSlotBaPeerEpoch[idx] = awdlCoexBaPeerEpoch;
+        awdlCoexSlotToken[idx] = awdlCoexSendingMgmtToken;
+        awdlCoexSlotEnqueueId[idx] = 0;
+        if (awdlCoexSendingMgmt) {
+            if (++awdlCoexMgmtEnqueueId == 0)
+                awdlCoexMgmtEnqueueId = 1;
+            awdlCoexSlotEnqueueId[idx] = awdlCoexLastMgmtEnqueueId = awdlCoexMgmtEnqueueId;
+        }
+    }
     if (!awdlCoexSendingData) {
         awdlCoexPendingSlot = idx;
         awdlCoexLastSlot = idx;
@@ -1959,4 +2141,385 @@ static bool awdlCoexOwnsRing(const struct iwx_tx_ring *ring)
 {
     return (awdlCoexQueue >= 0 && ring->qid == awdlCoexQueue) ||
         (awdlCoexOrphanQueue >= 0 && ring->qid == awdlCoexOrphanQueue);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Phase 3: receive Block Ack (-itlawdlcoexba).
+// ---------------------------------------------------------------------------------------------------
+
+// Removes the iPhone's station, with its sessions. Returns nonzero if the firmware may still hold it; Block
+// Ack is then quarantined for the generation.
+int ItlIwx::
+awdlCoexBaRemovePeer(struct iwx_softc *sc)
+{
+    awdlCoexBaRequestsPending.clear();
+    awdlCoexBaAnswerLength = 0;
+    if (!awdlCoexBaPeerAdded)
+        return 0;
+    const int gen = sc->sc_generation;
+    awdlCoexBaPeerAdded = false;
+    awdlCoexBaPeerAccepted = false;
+    awdlCoexBaTids = 0;
+    awdlCoexBaTidTeardown = 0;
+    awdlCoexBaRxIdleTids = 0;
+    awdlCoexRateStep = 0;
+    awdlCoexRateWindowOK = awdlCoexRateWindowFailed = 0;
+    struct iwx_rm_sta_cmd rm;
+    memset(&rm, 0, sizeof(rm));
+    rm.sta_id = kAwdlBaStationId;
+    const int rmErr = iwx_send_cmd_pdu(sc, IWX_REMOVE_STA, 0, sizeof(rm), &rm);
+    if (gen != sc->sc_generation)
+        return 0;
+    if (rmErr)
+        awdlCoexBaFailedGen = gen;
+    if (awdlCoexBaFilterOff) {
+        awdlCoexBaFilterOff = false;
+        awdlCoexBaFilter = ItlAWDL::BaFilterState{};
+        if (awdlCoexAdded)
+            (void)awdlCoexMacSend(sc, IWX_FW_CTXT_ACTION_MODIFY);
+    }
+    awdlCoexPublish();
+    return rmErr;
+}
+
+// The width the peer station and its rate control use: the listener's own context's with it, the station's
+// when the listener shares the station's binding (80 MHz for a 5 GHz station at 80 or 160 MHz, else 20).
+static int awdlCoexBaWidth(struct ieee80211com *ic)
+{
+    if (awdlCoexMultiActive)
+        return awdlCoexOwnWidth;
+    const struct ieee80211_node *ni = ic->ic_bss;
+    if (!ni || !ni->ni_chan || IEEE80211_IS_CHAN_2GHZ(ni->ni_chan))
+        return 20;
+    return ni->ni_chw == IEEE80211_CHAN_WIDTH_80 || ni->ni_chw == IEEE80211_CHAN_WIDTH_160 ? 80 : 20;
+}
+
+// Adds the peer station for `peer`, bound to the listener. Nonzero on failure (BA is then quarantined).
+int ItlIwx::
+awdlCoexBaAddPeer(struct iwx_softc *sc, const uint8_t *peer)
+{
+    const int gen = sc->sc_generation;
+    const int width = awdlCoexBaWidth(&sc->sc_ic);
+    struct iwx_add_sta_cmd cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.sta_id = kAwdlBaStationId;
+    cmd.station_type = IWX_STA_LINK;
+    cmd.mac_id_n_color = htole32(IWX_FW_CMD_ID_AND_COLOR(kAwdlCoexMacId, 0));
+    IEEE80211_ADDR_COPY(&cmd.addr, peer);
+    cmd.tid_disable_tx = htole16(0xffff);
+    cmd.station_flags = htole32((width == 80 ? IWX_STA_FLG_FAT_EN_80MHZ : IWX_STA_FLG_FAT_EN_20MHZ) |
+                                IWX_STA_FLG_MIMO_EN_MIMO2 | IWX_STA_FLG_MAX_AGG_SIZE_64K);
+    cmd.station_flags_msk = htole32(IWX_STA_FLG_FAT_EN_MSK | IWX_STA_FLG_MIMO_EN_MSK | IWX_STA_FLG_MAX_AGG_SIZE_MSK |
+                                    IWX_STA_FLG_AGG_MPDU_DENS_MSK);
+    uint32_t status = IWX_ADD_STA_SUCCESS;
+    const int err = iwx_send_cmd_pdu_status(sc, IWX_ADD_STA, sizeof(cmd), &cmd, &status);
+    if (gen != sc->sc_generation)
+        return ECANCELED;
+    awdlCoexBaStatus = err ? 0x80000000U | uint32_t(err) : status;
+    if (err || (status & IWX_ADD_STA_STATUS_MASK) != IWX_ADD_STA_SUCCESS) {
+        // A transport failure doesn't say whether the station exists.
+        awdlCoexBaFailedGen = gen;
+        awdlCoexPublish();
+        return err ? err : EIO;
+    }
+    awdlCoexBaPeerAdded = true;
+    awdlCoexBaPeerWidth = uint32_t(width);
+    awdlCoexBaPeerAccepted = false;
+    ++awdlCoexBaPeerEpoch;
+    awdlCoexDelbaWaitTid = -1;
+    memset(awdlCoexBaRxTidLastUS, 0, sizeof(awdlCoexBaRxTidLastUS));
+    awdlCoexBaLastRxPayloadUS = 0;
+    memcpy(awdlCoexBaPeer, peer, sizeof(awdlCoexBaPeer));
+    awdlCoexBaRequestsPending.keepPeer(peer);
+    awdlCoexBaPeerLastUS = awdlUptimeUS();
+    // A new peer's sequence numbers start a new record.
+    awdlCoexRxSeqHighKnown = 0;
+    awdlCoexPublish();
+    return 0;
+}
+
+// Sends one of our Block Ack management frames (ADDBA answer or request, DELBA) from the listener's queue,
+// tagged so its completion is attributed to it and not to the data rate.
+bool ItlIwx::
+awdlCoexSendMgmt(struct iwx_softc *sc, const uint8_t *frame, size_t length, uint8_t kind)
+{
+    struct ieee80211com *ic = &sc->sc_ic;
+    if (awdlUptimeUS() < awdlCoexTxPauseUntilUS)
+        return false;
+    if (awdlCoexQueue < 0 || awdlCoexQueue >= int(nitems(sc->txq)) || sc->txq[awdlCoexQueue].queued >= 64)
+        return false;
+    mbuf_t m = awdlCoexFrameMbuf(frame, length);
+    if (!m)
+        return false;
+    auto *node = ieee80211_ref_node(ic->ic_bss);
+    awdlCoexSending = true;
+    awdlCoexSendingData = true;
+    awdlCoexSendingMgmt = kind;
+    // ADDBA: the dialog token. DELBA: the TID, from its parameter field.
+    awdlCoexSendingMgmtToken = kind == kCoexSlotDelba ? uint8_t(frame[27] >> 4) : (length > 26 ? frame[26] : 0);
+    const int err = iwx_tx(sc, m, node, EDCA_AC_BE, awdlCoexQueue);
+    awdlCoexSendingMgmt = 0;
+    awdlCoexSendingData = false;
+    awdlCoexSending = false;
+    if (err) {
+        ieee80211_release_node(ic, node);
+        return false;
+    }
+    return true;
+}
+
+static bool awdlVht80TwoStream(uint32_t rate)
+{
+    constexpr uint32_t mask = IWX_RATE_MCS_MOD_TYPE_MSK | IWX_RATE_MCS_CHAN_WIDTH_MSK | IWX_RATE_MCS_NSS_MSK;
+    constexpr uint32_t mode = IWX_RATE_MCS_VHT_MSK | IWX_RATE_MCS_CHAN_WIDTH_80 | IWX_RATE_MCS_NSS_MSK;
+    return (rate & mask) == mode;
+}
+
+// From the coex task. The iPhone's ADDBA request gets the peer station and a firmware session, then an answer.
+// Idle sessions are ended with our own DELBA, a DELBA from the iPhone removes its session, and the station is
+// retired when the iPhone goes quiet. Every firmware wait is followed by a check that the same listener and
+// generation still hold, before any further command or state change.
+void ItlIwx::
+awdlCoexBaHandle(struct iwx_softc *sc)
+{
+    const int gen = sc->sc_generation;
+    if (awdlCoexBaGen != gen) {
+        // A firmware restart dropped the station and its sessions.
+        awdlCoexBaGen = gen;
+        awdlCoexBaRequestsPending.clear();
+        awdlCoexBaPeerAdded = false;
+        awdlCoexBaPeerAccepted = false;
+        awdlCoexBaTids = 0;
+        awdlCoexBaTidTeardown = 0;
+        awdlCoexBaRxIdleTids = 0;
+        awdlCoexBaAnswerLength = 0;
+        awdlCoexBaFilterOff = false;
+        awdlCoexBaFilter = ItlAWDL::BaFilterState{};
+    }
+    if (!awdlCoexBaRx || !awdlCoexData || !awdlCoexAdded || !awdlCoexTxStaAdded || awdlCoexTxHalted ||
+        awdlCoexBaFailedGen == gen || awdlCoexMovePending || awdlCoexGeneration != gen || !awdlCoexAddrKnown) {
+        awdlCoexBaRequestsPending.clear();
+        return;
+    }
+    const uint32_t tok = awdlCoexToken;
+    auto stillOurs = [&]() { return gen == sc->sc_generation && tok == awdlCoexToken && awdlCoexAdded &&
+                                    awdlCoexBaFailedGen != gen && !awdlStopping; };
+    const uint64_t now = awdlUptimeUS();
+    // Keep the station while the peer is still heard on our channel and has exchanged data in the last
+    // ten minutes.
+    if (awdlCoexBaPeerAdded && awdlCoexBaRequestsPending.empty()) {
+        const bool expired = !awdlCoexPeerKnown(awdlCoexBaPeer, now);
+        const bool idle = now - awdlCoexBaPeerLastUS > 600000000ULL;
+        if (expired || idle) {
+            awdlCoexBaEvent('X', expired ? 1U : 2U, 0, 0);
+            (void)awdlCoexBaRemovePeer(sc);
+            return;
+        }
+    }
+    const auto rxTidIdle = [&](unsigned tid) {
+        const uint64_t last = awdlCoexBaRxTidLastUS[tid];
+        return last && now >= last && now - last > 60000000ULL;
+    };
+    const auto waitingForDelba = [&]() {
+        return awdlCoexDelbaWaitTid >= 0 && awdlCoexDelbaWaitGen == gen &&
+            awdlCoexDelbaWaitEpoch == awdlCoexBaPeerEpoch;
+    };
+    if (awdlCoexBaPeerAdded) {
+        uint8_t idle = 0;
+        for (unsigned tid = 0; tid < 8; ++tid) {
+            const uint8_t bit = uint8_t(1U << tid);
+            const bool submitted = waitingForDelba() && awdlCoexDelbaWaitTid == int(tid) && awdlCoexDelbaTries;
+            const bool requested = awdlCoexBaRequestsPending.has(tid) ||
+                (awdlCoexBaAnswerLength && awdlCoexBaAnswerTid == tid);
+            if ((awdlCoexBaRxIdleTids & bit) && !submitted && (!rxTidIdle(tid) || requested)) {
+                awdlCoexBaRxIdleTids &= uint8_t(~bit);
+                awdlCoexBaTidTeardown &= uint8_t(~bit);
+                if (waitingForDelba() && awdlCoexDelbaWaitTid == int(tid))
+                    awdlCoexDelbaWaitTid = -1;
+            }
+            if ((awdlCoexBaTids & bit) && !(awdlCoexBaTidTeardown & bit) && !requested && rxTidIdle(tid))
+                idle |= bit;
+        }
+        if (idle) {
+            awdlCoexBaTidTeardown |= idle;
+            awdlCoexBaRxIdleTids |= idle;
+            ++awdlCoexBaRxIdleTeardowns;
+        }
+    }
+    struct iwx_add_sta_cmd cmd;
+    uint32_t status;
+    int err;
+    const uint32_t macColor = IWX_FW_CMD_ID_AND_COLOR(kAwdlCoexMacId, 0);
+    const uint8_t teardown = awdlCoexBaTidTeardown & awdlCoexBaTids;
+    if (awdlCoexBaPeerAdded && teardown) {
+        const uint8_t remote = teardown & ~awdlCoexBaRxIdleTids;
+        const uint8_t active = waitingForDelba() ? teardown & (1U << awdlCoexDelbaWaitTid) : 0;
+        const unsigned tid = unsigned(__builtin_ctz(remote ? remote : active ? active : teardown));
+        const uint8_t bit = uint8_t(1U << tid);
+        const bool local = awdlCoexBaRxIdleTids & bit;
+        bool retire = !local;
+        if (local) {
+            if (!waitingForDelba() || awdlCoexDelbaWaitTid != int(tid)) {
+                awdlCoexDelbaWaitTid = int(tid);
+                awdlCoexDelbaWaitEpoch = awdlCoexBaPeerEpoch;
+                awdlCoexDelbaWaitGen = gen;
+                awdlCoexDelbaTries = 0;
+                awdlCoexDelbaResult = 0;
+                awdlCoexDelbaAttemptId = 0;
+                awdlCoexDelbaDeadlineUS = now + 3000000ULL;
+                awdlCoexDelbaNextTryUS = 0;
+            }
+            if (awdlCoexDelbaResult == 1) {
+                ++awdlCoexDelbaConfirmed;
+                retire = true;
+            } else if (now >= awdlCoexDelbaDeadlineUS || (awdlCoexDelbaResult == 2 && awdlCoexDelbaTries >= 3)) {
+                ++awdlCoexDelbaForced;
+                awdlCoexBaEvent('F', tid, awdlCoexDelbaTries, now >= awdlCoexDelbaDeadlineUS ? 1 : 0,
+                                0, awdlCoexDelbaAttemptId);
+                retire = true;
+            } else if ((awdlCoexDelbaTries == 0 || awdlCoexDelbaResult == 2) && now >= awdlCoexDelbaNextTryUS) {
+                uint8_t delba[ItlAWDL::kDelbaLength];
+                if (now >= awdlCoexTxPauseUntilUS &&
+                    ItlAWDL::buildDelba(delba, sizeof(delba), awdlCoexBaPeer, awdlCoexAddr, kAwdlCoexBssid,
+                                       uint8_t(tid), false, 39, ++awdlCoexBaSequence) &&
+                    awdlCoexSendMgmt(sc, delba, sizeof(delba), kCoexSlotDelba)) {
+                    ++awdlCoexBaDelbasSent;
+                    ++awdlCoexDelbaTries;
+                    awdlCoexDelbaResult = 0;
+                    awdlCoexDelbaAttemptId = awdlCoexLastMgmtEnqueueId;
+                    awdlCoexDelbaNextTryUS = now + 300000ULL;
+                    awdlCoexBaEvent('L', tid, awdlCoexDelbaTries, 0, 0, awdlCoexDelbaAttemptId);
+                } else {
+                    awdlCoexDelbaNextTryUS = now + 100000ULL;
+                }
+                if (!stillOurs())
+                    return;
+            }
+        }
+        if (retire) {
+            if (waitingForDelba() && awdlCoexDelbaWaitTid == int(tid))
+                awdlCoexDelbaWaitTid = -1;
+            memset(&cmd, 0, sizeof(cmd));
+            cmd.sta_id = kAwdlBaStationId;
+            cmd.mac_id_n_color = htole32(macColor);
+            cmd.add_modify = IWX_STA_MODE_MODIFY;
+            cmd.remove_immediate_ba_tid = uint8_t(tid);
+            cmd.modify_mask = IWX_STA_MODIFY_REMOVE_BA_TID;
+            status = IWX_ADD_STA_SUCCESS;
+            err = iwx_send_cmd_pdu_status(sc, IWX_ADD_STA, sizeof(cmd), &cmd, &status);
+            if (!stillOurs())
+                return;
+            if (err || (status & IWX_ADD_STA_STATUS_MASK) != IWX_ADD_STA_SUCCESS) {
+                awdlCoexBaStatus = err ? 0x80000000U | uint32_t(err) : status;
+                awdlCoexBaFailedGen = gen;
+                awdlCoexPublish();
+                return;
+            }
+            awdlCoexBaTids &= uint8_t(~bit);
+            awdlCoexBaTidTeardown &= uint8_t(~bit);
+            awdlCoexBaRxIdleTids &= uint8_t(~bit);
+            awdlCoexBaRxTidLastUS[tid] = 0;
+            if (local)
+                ++awdlCoexDelbaRxTidRemoved;
+            return;
+        }
+    }
+    awdlCoexBaTidTeardown &= awdlCoexBaTids;
+    // A fresh request for the retiring session waits, while other BA work continues.
+    ItlAWDL::AddbaRequest request;
+    if (!awdlCoexBaAnswerLength && awdlCoexBaRequestsPending.take(awdlCoexBaTidTeardown, request)) {
+        if (awdlCoexBaPeerAdded && !ItlAWDL::sameAddress(request.peer, awdlCoexBaPeer)) {
+            ++awdlCoexBaOtherPeer;
+            return;
+        }
+        if (!awdlCoexBaPeerAdded) {
+            if (awdlCoexBaAddPeer(sc, request.peer))
+                return;
+            if (!stillOurs()) {
+                (void)awdlCoexBaRemovePeer(sc);
+                return;
+            }
+        }
+        const uint8_t tidBit = uint8_t(1U << request.tid);
+        if ((awdlCoexBaTids & tidBit) && awdlCoexBaTidToken[request.tid] != request.token) {
+            // A new dialog on a TID with a session: the old session goes first.
+            memset(&cmd, 0, sizeof(cmd));
+            cmd.sta_id = kAwdlBaStationId;
+            cmd.mac_id_n_color = htole32(macColor);
+            cmd.add_modify = IWX_STA_MODE_MODIFY;
+            cmd.remove_immediate_ba_tid = request.tid;
+            cmd.modify_mask = IWX_STA_MODIFY_REMOVE_BA_TID;
+            status = IWX_ADD_STA_SUCCESS;
+            err = iwx_send_cmd_pdu_status(sc, IWX_ADD_STA, sizeof(cmd), &cmd, &status);
+            if (!stillOurs())
+                return;
+            if (err || (status & IWX_ADD_STA_STATUS_MASK) != IWX_ADD_STA_SUCCESS) {
+                awdlCoexBaStatus = err ? 0x80000000U | uint32_t(err) : status;
+                awdlCoexBaFailedGen = gen;
+                awdlCoexPublish();
+                return;
+            }
+            awdlCoexBaTids &= uint8_t(~tidBit);
+        }
+        if (!(awdlCoexBaTids & tidBit)) {
+            memset(&cmd, 0, sizeof(cmd));
+            cmd.sta_id = kAwdlBaStationId;
+            cmd.mac_id_n_color = htole32(macColor);
+            cmd.add_modify = IWX_STA_MODE_MODIFY;
+            cmd.add_immediate_ba_tid = request.tid;
+            cmd.add_immediate_ba_ssn = htole16(request.ssn);
+            cmd.rx_ba_window = htole16(request.window);
+            cmd.modify_mask = IWX_STA_MODIFY_ADD_BA_TID;
+            status = IWX_ADD_STA_SUCCESS;
+            err = iwx_send_cmd_pdu_status(sc, IWX_ADD_STA, sizeof(cmd), &cmd, &status);
+            if (!stillOurs())
+                return;
+            awdlCoexBaStatus = err ? 0x80000000U | uint32_t(err) : status;
+            if (err || (status & IWX_ADD_STA_STATUS_MASK) != IWX_ADD_STA_SUCCESS ||
+                !(status & IWX_ADD_STA_BAID_VALID_MASK)) {
+                awdlCoexBaFailedGen = gen;
+                awdlCoexPublish();
+                return;
+            }
+            awdlCoexBaTids |= tidBit;
+            awdlCoexBaTidToken[request.tid] = request.token;
+            ++awdlCoexBaSessions;
+            awdlCoexBaRxTidLastUS[request.tid] = awdlUptimeUS();
+        }
+        // A DELBA received during the firmware wait takes precedence over this answer.
+        if (!(awdlCoexBaTidTeardown & tidBit)) {
+            awdlCoexBaAnswerTid = request.tid;
+            awdlCoexBaAnswerRetryUS = 0;
+            awdlCoexBaAnswerLength = ItlAWDL::buildAddbaResponse(awdlCoexBaAnswer, sizeof(awdlCoexBaAnswer), request,
+                                                                 awdlCoexAddr, ++awdlCoexBaSequence);
+        }
+    }
+    const uint64_t answerNow = awdlUptimeUS();
+    if (awdlCoexBaAnswerLength && stillOurs() && answerNow >= awdlCoexTxPauseUntilUS &&
+        answerNow >= awdlCoexBaAnswerRetryUS) {
+        if (awdlCoexSendMgmt(sc, awdlCoexBaAnswer, awdlCoexBaAnswerLength, kCoexSlotBaAnswer)) {
+            ++awdlCoexBaAnswers;
+            awdlCoexBaAnswerLength = 0;
+        } else {
+            ++awdlCoexBaAnswerErrors;
+            awdlCoexBaAnswerRetryUS = answerNow + 20000ULL;
+        }
+    }
+    // Promiscuous receive off for as long as a receive BA session is open. It comes back on when the session
+    // or the peer station goes. (Side effect: the firmware delivers group data to a listener only in
+    // promiscuous mode, so no multicast is received meanwhile.)
+    if (stillOurs()) {
+        const bool filterWasOff = awdlCoexBaFilterOff;
+        const bool wantOff = awdlCoexBaPeerAdded && awdlCoexBaTids;
+        if (wantOff != awdlCoexBaFilterOff) {
+            awdlCoexBaFilterOff = wantOff;
+            awdlCoexBaFilter.off = wantOff;
+            ++awdlCoexBaFilterChanges;
+            if (awdlCoexMacSend(sc, IWX_FW_CTXT_ACTION_MODIFY) && gen == sc->sc_generation) {
+                awdlCoexBaFilterOff = filterWasOff;
+                awdlCoexBaFilter.off = filterWasOff;
+            }
+            awdlCoexPublish();
+        }
+    }
 }

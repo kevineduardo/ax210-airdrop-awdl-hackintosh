@@ -466,6 +466,9 @@ public:
     void   awdlCoexRetarget(struct iwx_softc *);
     void   awdlCoexAddrApply(struct iwx_softc *);
     int    awdlCoexBaRemovePeer(struct iwx_softc *);
+    int    awdlCoexBaAddPeer(struct iwx_softc *, const uint8_t *peer);
+    bool   awdlCoexSendMgmt(struct iwx_softc *, const uint8_t *frame, size_t length, uint8_t kind);
+    void   awdlCoexBaHandle(struct iwx_softc *);
     int    awdlCoexTxTeardown(struct iwx_softc *);
     int    awdlCoexTxSetup(struct iwx_softc *);
     void   awdlCoexTxSend(struct iwx_softc *);

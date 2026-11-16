@@ -3837,6 +3837,10 @@ iwx_tvqm_enable_txq(struct iwx_softc *sc, int tid, int ssn, uint32_t size, int s
     delete ring;
 #endif
     iwx_free_resp(sc, &hcmd);
+#ifdef AIRPORT_WCL
+    if (awdlCoexTx && sta_id == IWX_MONITOR_STA_ID)
+        awdlCoexQueueStage = "ok";
+#endif
     return fwqid;
 fail:
 #ifdef AIRPORT_VTD

@@ -82,7 +82,7 @@ The AWDL code above the HAL only uses a handful of callbacks and fields in `stru
 | Channel rules | The channel list macOS asks for | The firmware's own channel map, after answering its country notice (`MCC_UPDATE_CMD`, as Linux does), plus beacon hints for passive channels. DFS and no-ad-hoc channels are never used to start a transmission |
 | Frames our sync frames advertise | The slots macOS chose | All 16 slots on the listener's channel (op class 128 at 80 MHz) |
 | Data path | `flushData` pushes frames during a dwell | The HAL pulls frames from `awdl0` (`ic_awdl_coex_pop`) and sends them from the listener's queue, gated by the peer's schedule |
-| Firmware objects | MAC 1, PHY 1, station 3 + its queue | MAC 1, PHY 1, station 2 (listener) + its queue; station 3 for the Block Ack peer (later phase) |
+| Firmware objects | MAC 1, PHY 1, station 3 + its queue | MAC 1, PHY 1, station 2 (listener) + its queue; station 3 for the iPhone when Block Ack is on (`-itlawdlcoexba`) |
 
 Because both paths use MAC 1, PHY context 1 and firmware station 3, they never run in the same boot. The front end decides before the HAL attaches (`ic_awdl_coex_on`); with it set the HAL never installs `ic_awdl_listen`, `ic_awdl_tx` and `ic_awdl_dwell_state`, refuses `iwx_awdl_listen`, and reports the P2P path as disabled. `AWDLBackend` on the controller and on `awdl0` shows which backend runs (`coex`, `p2p`, `scan` or `none`). The AWDL build guard still applies: on a build it blocks, `-itlawdlcoex` does nothing either.
 
@@ -104,7 +104,22 @@ Because both paths use MAC 1, PHY context 1 and firmware station 3, they never r
 - Counters are published on the AirportItlwm controller, not on the registry root.
 - Sync frames come from this driver's own builder (`buildAWDLFrame`): when the listener has a channel, every slot of the channel sequence, the next AW channel and the master channel name it, with op class 128 at 80 MHz. A PSF is left out where the P2P path leaves it out (AF TX mode 3 and not the sync master).
 - `awdl0`'s data is framed by `AirportItlwmAWDLFrame.hpp`, which the P2P path's `flushData` now uses too (same bytes). A host test checks that ForbiddenItlwm's decoder, which guards the listener's queue, accepts it.
-- The AW-timed idle sync frames (`-itlawdlawsync`), the service-record merge and every Block Ack part are later phases of the port.
+- The receive Block Ack responder is off unless `-itlawdlcoexba` is set; ForbiddenItlwm runs it whenever its data mode is on.
+- The AW-timed idle sync frames (`-itlawdlawsync`), the service-record merge and the transmit side of Block Ack are later phases of the port.
+
+### Block Ack
+
+Without Block Ack every AWDL data frame is sent and acknowledged on its own, which caps a transfer at a few MB/s even at VHT 80 MHz. With it, a sender puts up to 64 frames in one A-MPDU and the receiver answers them all with one Block Ack.
+
+**Receive (`-itlawdlcoexba`).** When the iPhone wants to send in A-MPDUs it sends an ADDBA request to `awdl0`'s address. The receive hook takes it (from a peer heard on our channel in the last 60 s) and the engine's task:
+
+1. adds a firmware station for the iPhone (station 3, a `LINK` station bound to the listener's MAC context, 80 MHz when the listener is at 80 MHz, two streams, A-MPDU density 0),
+2. opens a firmware receive session on the request's TID with its window and start sequence (`ADD_STA` with `ADD_BA_TID`; the firmware must answer with a valid BAID),
+3. sends the 33-byte ADDBA response from the listener's queue, retried every 20 ms until it is queued; the iPhone's acknowledgement of it is recorded (`ITLAWDLCoexBaPeerAccepted`).
+
+From then on the firmware acknowledges the iPhone's A-MPDUs itself. Frames reach `awdl0` in the order they arrive; there is no host reorder buffer, as in ForbiddenItlwm (the order is measured, see `ITLAWDLCoexRxSeq*`). A session ends when the iPhone sends a DELBA, or after 60 s without data on its TID, with our own DELBA (reason 39, confirmed by its acknowledgement, at most 3 tries or 3 s). The iPhone's station goes after 60 s without hearing it, after 10 minutes without data, when the listener moves or is removed, and with every firmware restart.
+
+While a receive session is open, the listener's MAC context drops promiscuous receive: the firmware does not acknowledge a session's frames with it on. A listener only gets group data in promiscuous mode, so mDNS multicast is not received while a session is open. Promiscuous receive comes back when the last session ends.
 
 ### Safety rules kept from ForbiddenItlwm
 
@@ -121,6 +136,7 @@ Because both paths use MAC 1, PHY context 1 and firmware station 3, they never r
 | 0 | Backend selection, P2P path off, firmware capabilities published (`ITLAWDLCoexFw*`), beacon hints, helpers and host tests, two HAL fixes (Block Ack notifications for other firmware stations are reclaimed; `iwx_flush_sta_tids` no longer reads past `sc_tid_data`) |
 | 1 | The listener: its own PHY context and binding on 149 at 80 MHz (or 6 at 20 MHz, or en0's channel), country answers (`MCC_UPDATE_CMD`) and channel moves, receive of AWDL action and data frames into `awdl0` (data only from peers heard on our channel in the last 60 s), promiscuous isolation so the station never sees the listener's frames. No transmit |
 | 2 | Transmit: the listener's own firmware station (2) and queue, macOS's sync frames (MI and PSF alternating, every 45 ms idle and 100 ms during data, built by the AWDL interface with all 16 slots on the listener's channel), `awdl0`'s data pulled one frame at a time (`ic_awdl_coex_pop`) with fixed rates (6 Mbit/s group, 24 Mbit/s, then HT MCS 4, 5, 7, then VHT80 2SS MCS 4 and 7) and a rate ladder fed by the TX responses, the stuck-frame watchdog, and the send gate that holds frames for the iPhone while its schedule says it is away or dozing |
+| 3 | Receive Block Ack (`-itlawdlcoexba`): ADDBA answers, the iPhone's station and firmware session, DELBA and idle teardown, promiscuous receive off while a session is open, arrival-order counters |
 
 Hardware checks per phase: [test-results-tahoe.md](test-results-tahoe.md#coex-backend-to-test-on-hardware).
 

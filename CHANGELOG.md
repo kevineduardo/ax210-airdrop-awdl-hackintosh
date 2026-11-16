@@ -10,10 +10,12 @@ All notable changes to this project. Versions follow [Semantic Versioning](https
 - AWDL coex backend, phase 0 (experimental, off by default): `-itlawdlcoex` selects a port of ForbiddenItlwm's coex listener engine (retropineaple, GPL-2.0) instead of the P2P listen path, and switches the P2P path off for that boot. Phase 0 only selects the backend and publishes what the firmware supports (`ITLAWDLCoexFw*`, `AWDLBackend`); AirDrop does not work in this mode yet. Ported helpers and host tests in `include/AWDLCoex/` and `tests/unit/awdlcoex/`.
 - AWDL coex backend, phase 1: with `-itlawdlcoex` the listener runs on its own channel (149 at 80 MHz when the firmware allows it, else 6) next to en0, answers the firmware's country notice and hands AWDL action and data frames to `awdl0`. Receive only. `-itlawdlcoexshared` and `-itlawdlsameband` for A/B tests.
 - AWDL coex backend, phase 2: the listener now sends macOS's sync frames and `awdl0`'s data (one frame at a time, rate ladder up to VHT 80 MHz two streams, send gate following the iPhone's schedule), so AirDrop can run over it. `-itlawdlcoexnogate`, `-itlawdlcoexcalwait` and `itlawdlcoexpull=` for A/B tests. A host test checks `awdl0`'s data framing against ForbiddenItlwm's decoder.
+- AWDL coex backend, phase 3: `-itlawdlcoexba` answers the iPhone's Block Ack request, so the iPhone can send to the Mac in A-MPDUs (the iPhone gets a firmware station and receive session; idle sessions end with our DELBA; promiscuous receive is off while a session is open). Off by default. New counters `ITLAWDLCoexBa*`, `ITLAWDLCoexMgmt*`, `ITLAWDLCoexRxSeq*` (arrival order of the iPhone's frames).
 - `scripts/check-compat.sh`: a read-only check to run before and after installing. It reports the macOS build and kernel, the Intel Wi-Fi card, the loaded kexts and `awdl0`, the boot arguments, the BLE advertising-sets log line and the pf/netagent state, with OK/WARN/FAIL lines and a verdict. Exit code 1 when something FAILs.
 
 ### Fixed
 
+- The coex backend's `ITLAWDLCoexQueueStage` stayed at `pending` after the listener's queue was set up; it now reads `ok`.
 - Block Ack notifications for firmware stations other than the main one were dropped, so such a station's queue was never reclaimed. They are now reclaimed after every record is checked; en0's TX watchdog only follows the main station.
 - `iwx_flush_sta_tids` could read past `sc_tid_data` when the firmware reported the management TID (15) for a flushed queue.
 

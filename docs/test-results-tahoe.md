@@ -331,6 +331,28 @@ AirDrop is expected to work both ways in this phase, without Block Ack.
 
 Results: not run yet.
 
+### Phase 3: receive Block Ack (Set B plus `-itlawdlcoexba`)
+
+The iPhone can now send to the Mac in A-MPDUs. Test with a 12 MB photo and a 60 MB video, iPhone to Mac, first with Set B (phase 2 numbers, no Block Ack) and then with Set B plus `-itlawdlcoexba`. Run `ioreg -lw0 -r -c AirportItlwm -d1 | grep -E 'ITLAWDLCoex(Ba|Mgmt|RxSeq|RxVht|RxWide|DataRx)'` right after each transfer.
+
+| Check | Command or key | Expected |
+|---|---|---|
+| Switch seen | `ITLAWDLCoexBaRx` | `Yes` |
+| Request answered | `ITLAWDLCoexBaRequests`, `ITLAWDLCoexBaSessions`, `ITLAWDLCoexBaAnswers` | 1 or more each per transfer; `ITLAWDLCoexBaAnswerErrors` small (each error is a 20 ms retry) |
+| Firmware session | `ITLAWDLCoexBaStatus` | the ADD_STA status with the BAID-valid bit (`0x8000` set) and status bits 0 (success); `ITLAWDLCoexBaBroken = No` |
+| Peer station | `ITLAWDLCoexBaPeerAdded`, `ITLAWDLCoexBaPeerWidth` | `Yes` during and after the transfer, `80` on 149 at 80 MHz (`20` on channel 6) |
+| Answer acknowledged | `ITLAWDLCoexBaPeerAccepted`, `ITLAWDLCoexMgmtOK` | `Yes`, 1 or more; `ITLAWDLCoexMgmtFailed` small |
+| Receive filter | `ITLAWDLCoexBaFilterOff`, `ITLAWDLCoexPromiscLive` | `Yes` and `No` while a session is open; back to `No` and `Yes` after the session ends (60 s idle, `ITLAWDLCoexBaRxIdleTeardowns` and `ITLAWDLCoexDelbaConfirmed` rise) |
+| iPhone sends wide | `ITLAWDLCoexRxVht80TwoStream`, `ITLAWDLCoexRxWide80` | both rising during the transfer: the iPhone sends VHT 80 MHz two streams |
+| Fewer retries | `ITLAWDLCoexDataRxRetry` divided by `ITLAWDLCoexDataRxUcast` | lower than in phase 2 |
+| Arrival order (record) | `ITLAWDLCoexRxSeqFrames`, `ITLAWDLCoexRxSeqOutOfOrder`, `ITLAWDLCoexRxSeqMaxBehind`, `ITLAWDLCoexRxSeqDuplicates` | Record them. If `RxSeqOutOfOrder` is above 1 % of `RxSeqFrames` during a transfer, a host reorder buffer is worth adding (see phase 5) |
+| Speed, iPhone to Mac | `tools/airdrop/airdrop-measure.sh` (12 MB and 60 MB) | Clearly faster than phase 2. Target: 5 MB/s or more (ForbiddenItlwm measured about 1 to 5 MB/s from receive Block Ack alone on a shared channel, and 17 to 24 MB/s with everything on its own channel). Record MB/s for both sizes |
+| Multicast while a session is open | Start a second transfer right after the first; open the share sheet on a second Apple device during a transfer | Both still work. Promiscuous receive is off while a session is open, so mDNS from the iPhone is not received then; record any extra delay |
+| Errors | `ITLAWDLCoexTeardownErrors`, `ITLAWDLCoexBroken`, kernel log | `0`, `No`, no firmware errors |
+| Wi-Fi off/on during an open session | Wi-Fi menu off and on during a transfer, 3 times | No panic; `ITLAWDLCoexBaPeerAdded = No` after Wi-Fi comes back, until the next request |
+
+Results: not run yet.
+
 ## OpenCore requirements for Tahoe
 
 - `Kernel > Quirks > PowerTimeoutKernelPanic = false`. On kernel 25.6 the quirk falls back to replacing the kernel's first `"com.apple\0"` with `"not.apple\0"`, which breaks pf anchor checks, turns off Skywalk's transport agent and breaks QUIC pacing.
