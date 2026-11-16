@@ -30,6 +30,8 @@
 #include <AWDLCoex/AWDLRegulatory.hpp>
 #include <AWDLCoex/AWDLChannels.hpp>
 #include <AWDLCoex/AWDLObservation.hpp>
+#include <AWDLCoex/AWDLProbePolicy.hpp>
+#include <AWDLCoex/AWDLBlockAck.hpp>
 
 // The engine is selected for this boot (ic_awdl_coex_on at attach). Read by the P2P path's guards.
 static bool awdlCoexSelected;
@@ -167,8 +169,84 @@ static uint32_t awdlCoexPromiscAmbiguous, awdlCoexMacMaskSeen[4];
 static bool awdlRxMacMaskValid;
 static uint8_t awdlRxMacMask;
 
-// The engine's task: country answers, channel moves, address changes, publication (and from phase 2
-// sync frames and data).
+// Phase 2: the listener's own station and queue, sync frames, single-frame data, the rate ladder and
+// the send gate.
+constexpr uint64_t kAwdlCoexTxStuckUS = 1000000;
+static bool awdlCoexSending, awdlCoexSendingData;
+static uint64_t awdlCoexInFlightUS;
+static uint32_t awdlCoexStaResult, awdlCoexQueueResult;
+static uint32_t awdlCoexTxBuilt, awdlCoexTxNotReady, awdlCoexTxSubmitted, awdlCoexTxSubmitErrors;
+static uint32_t awdlCoexTxBuildRejected;
+// Why the channel is refused right now, as bits: 1 not in the fixed-schedule list, 2 passive (net80211's
+// flag for a channel the firmware's profile doesn't mark active, without a beacon hint), 4 DFS, 8 no ad hoc,
+// 16 not active, 32 not the channel our frames name, 64 a move is pending. 0 while it is eligible.
+static uint32_t awdlCoexRefusedReason, awdlCoexRefusedChannelFlags;
+static char awdlCoexRefusalSnapshot[128];
+static uint32_t awdlCoexTxOK, awdlCoexTxFailed, awdlCoexTxStuck, awdlCoexTxRefusedChannel;
+static uint32_t awdlCoexSetupAttempts, awdlCoexSetupAborts, awdlCoexBadCompletions, awdlCoexLateCompletions;
+static int awdlCoexLastSlot = -1, awdlCoexLastBoundary = -1, awdlCoexPendingGeneration = -1;
+static uint32_t awdlCoexLastSsn = 0xffffffffU;
+static char awdlCoexFaultSnapshot[160];
+// Where the last queue allocation stopped, and the number the firmware gave. Set by setup just before it
+// asks for the queue: TVQM checks them after the firmware's answer, before it adopts a host ring, so a
+// stale answer can't install one.
+static const char *awdlCoexQueueStage = "none";
+static int awdlCoexQueueAssigned = -1;
+static uint32_t awdlCoexQueueWritePointer = 0xffffffffU;
+static uint32_t awdlCoexSetupToken;
+static int awdlCoexSetupGen = -1;
+static bool awdlCoexSetupCurrent(int generation)
+{
+    return awdlCoexSetupToken == awdlCoexToken && awdlCoexAdded && !awdlStopping && awdlCoexSetupGen == generation;
+}
+// A sync frame can wait behind retried data while the radio is on the station's channel. A stall counts
+// only if no completion at all came for a second, or the sync frame waited 5 s; it pauses sending for
+// 0.5 s, and only three stalls in a row with no completion between them halt TX.
+static uint64_t awdlCoexLastCompletionUS, awdlCoexTxPauseUntilUS;
+static uint32_t awdlCoexStuckStreak, awdlCoexTxPauses, awdlCoexWedgedRebuilds;
+static uint32_t awdlCoexDataTx, awdlCoexDataTxErrors, awdlCoexDataOK, awdlCoexDataFailed, awdlCoexDataPumps;
+static uint64_t awdlCoexLastSyncUS;
+static uint32_t awdlCoexIdleSyncFrames;
+// TX response attribution: the response's status is for the descriptor its header index names; the SSN
+// only says how far to reclaim. Slots reclaimed without their own status are counted, not credited.
+static uint32_t awdlCoexStatusIdxHits, awdlCoexStatusIdxMisses, awdlCoexMultiReclaims, awdlCoexReclaimUnknown,
+    awdlCoexSyncReclaimedUnknown;
+// Per ring slot: 1 for a group data frame, 2 for unicast, so completions say whether the peer acknowledged us.
+static uint8_t awdlCoexSlotKind[IWX_MIN_256_BA_QUEUE_SIZE_GEN3];
+static uint32_t awdlCoexUcastOK, awdlCoexUcastFailed, awdlCoexGroupOK, awdlCoexGroupFailed;
+// Unicast data rate for our frames: 0 legacy 24 Mbit/s, then HT MCS 4, 5, 7 (20 MHz, one stream). Steps
+// down after a window with over 20% failures, up after one with under 5%. Steps 4 and 5 are VHT 80 MHz,
+// two streams, MCS 4 and 7, only while the listener is at 80 MHz.
+static unsigned awdlCoexRateStep;
+static uint32_t awdlCoexRateWindowOK, awdlCoexRateWindowFailed, awdlCoexRateUps, awdlCoexRateDowns;
+static const uint8_t kAwdlCoexRateMcs[6] = {0, 4, 5, 7, 4, 7};
+static uint32_t awdlCoexVhtFrames;
+// The peer whose schedule is tracked (its TLV 4 and TLV 18), for the send gate.
+static ItlAWDL::PeerSchedule awdlCoexPeerSchedule;
+static uint8_t awdlCoexSchedPeer[6];
+static uint32_t awdlCoexSchedToken;
+static uint32_t awdlCoexPeerSyncFrames, awdlCoexPeerSequenceRejected;
+static bool awdlCoexScheduleCalibrated;
+static bool awdlCoexScheduleCurrent()
+{
+    return awdlCoexAdded && awdlCoexSchedToken == awdlCoexToken &&
+        awdlCoexPeerSchedule.ourChannel == awdlCoexChannel &&
+        (!awdlCoexBaPeerAdded || ItlAWDL::sameAddress(awdlCoexSchedPeer, awdlCoexBaPeer));
+}
+// Send gate (on unless -itlawdlcoexnogate). Frames for the peer leave the host only while its schedule has
+// it on our channel, and while it is idle only in the first kAwdlGateAwWindowUS of an AW.
+static bool awdlCoexGate = true;
+static uint64_t awdlCoexGateSinceUS, awdlCoexGateLimitUS;
+static uint8_t awdlCoexGateKind;
+static uint32_t awdlCoexGateHolds, awdlCoexGateAwayTicks, awdlCoexGateDozeTicks, awdlCoexGateForced;
+// Last data frame from the schedule peer: a peer that sent data in the last 100 ms is awake.
+static uint64_t awdlCoexSchedPeerRxUS;
+constexpr uint64_t kAwdlGateAwWindowUS = 4000, kAwdlGateAwakeUS = 100000;
+// -itlawdlcoexcalwait off: the schedule assumes offset 0 until refuted (PeerSchedule::assumeZero), so the
+// gate works from the first sync frame after each anchor.
+static bool awdlCoexAssumeZero = true;
+
+// The engine's task: country answers, channel moves, address changes, sync frames, data, publication.
 static CTimeout *awdlCoexTxTimer;
 static struct task awdlCoexTxTaskEntry;
 static uint64_t awdlCoexLastRoutinePublishUS;
@@ -177,5 +255,7 @@ static uint64_t awdlUptimeUS();
 static void awdlStopTimers();
 static void awdlCoexPublish();
 static void awdlCoexAddrSyncWanted();
+static void awdlCoexNoteSubmitted(struct iwx_softc *, int qid, int idx, const struct ieee80211_frame *);
+static bool awdlCoexOwnsRing(const struct iwx_tx_ring *);
 
 #endif /* ItlIwxAWDLCoex_hpp */

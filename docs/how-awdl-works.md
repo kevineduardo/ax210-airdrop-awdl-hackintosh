@@ -102,6 +102,9 @@ Because both paths use MAC 1, PHY context 1 and firmware station 3, they never r
 - The listener's address is `awdl0`'s address (`ic_awdl_addr`) from the start, instead of being learned from the first sync frame macOS builds. A change is applied to the firmware from the engine's task.
 - The first PHY command for the listener's own channel removes and adds PHY context 1 when the band changes (it was added on channel 1 at firmware start and nothing binds it yet). The P2P path found that band changes need this on the AX210. ForbiddenItlwm sends MODIFY. Later moves (`awdlCoexRetarget`) keep ForbiddenItlwm's MODIFY.
 - Counters are published on the AirportItlwm controller, not on the registry root.
+- Sync frames come from this driver's own builder (`buildAWDLFrame`): when the listener has a channel, every slot of the channel sequence, the next AW channel and the master channel name it, with op class 128 at 80 MHz. A PSF is left out where the P2P path leaves it out (AF TX mode 3 and not the sync master).
+- `awdl0`'s data is framed by `AirportItlwmAWDLFrame.hpp`, which the P2P path's `flushData` now uses too (same bytes). A host test checks that ForbiddenItlwm's decoder, which guards the listener's queue, accepts it.
+- The AW-timed idle sync frames (`-itlawdlawsync`), the service-record merge and every Block Ack part are later phases of the port.
 
 ### Safety rules kept from ForbiddenItlwm
 
@@ -117,6 +120,7 @@ Because both paths use MAC 1, PHY context 1 and firmware station 3, they never r
 |---|---|
 | 0 | Backend selection, P2P path off, firmware capabilities published (`ITLAWDLCoexFw*`), beacon hints, helpers and host tests, two HAL fixes (Block Ack notifications for other firmware stations are reclaimed; `iwx_flush_sta_tids` no longer reads past `sc_tid_data`) |
 | 1 | The listener: its own PHY context and binding on 149 at 80 MHz (or 6 at 20 MHz, or en0's channel), country answers (`MCC_UPDATE_CMD`) and channel moves, receive of AWDL action and data frames into `awdl0` (data only from peers heard on our channel in the last 60 s), promiscuous isolation so the station never sees the listener's frames. No transmit |
+| 2 | Transmit: the listener's own firmware station (2) and queue, macOS's sync frames (MI and PSF alternating, every 45 ms idle and 100 ms during data, built by the AWDL interface with all 16 slots on the listener's channel), `awdl0`'s data pulled one frame at a time (`ic_awdl_coex_pop`) with fixed rates (6 Mbit/s group, 24 Mbit/s, then HT MCS 4, 5, 7, then VHT80 2SS MCS 4 and 7) and a rate ladder fed by the TX responses, the stuck-frame watchdog, and the send gate that holds frames for the iPhone while its schedule says it is away or dozing |
 
 Hardware checks per phase: [test-results-tahoe.md](test-results-tahoe.md#coex-backend-to-test-on-hardware).
 

@@ -264,6 +264,12 @@ public:
     bool magicPacketEnabled;
     static int awdlActionFrameHandler(struct ieee80211com *ic, mbuf_t m, struct ieee80211_rxinfo *rxi);
     static int awdlDataFrameHandler(struct ieee80211com *ic, mbuf_t m, struct ieee80211_rxinfo *rxi);
+    // AWDL coex backend (-itlawdlcoex): the HAL pulls sync and data frames from awdl0 through these.
+    static size_t awdlCoexSync(struct ieee80211com *ic, uint8_t *buf, size_t cap, uint64_t nowUs);
+    static size_t awdlCoexPop(struct ieee80211com *ic, uint8_t *buf, size_t cap, const uint8_t *holdFor,
+                              int holdEverySize);
+    static unsigned awdlCoexQueued(struct ieee80211com *ic);
+    static void awdlCoexService(struct ieee80211com *ic);
     // Experimental awdl0 support, enabled with the -itlawdl boot argument.
     bool fAWDLEnabled;
 #if defined(AIRPORT_AWDL)

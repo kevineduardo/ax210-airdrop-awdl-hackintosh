@@ -2862,6 +2862,13 @@ iwx_reset_tx_ring(struct iwx_softc *sc, struct iwx_tx_ring *ring)
                 getMainCommandGate()->commandWakeup(&ring->desc[i]);
         }
         
+#ifdef AIRPORT_WCL
+        /* The coex listener's frames hold a node reference, released on completion; release it here too. */
+        if (data->m != NULL && data->in && awdlCoexOwnsRing(ring)) {
+            ieee80211_release_node(&sc->sc_ic, &data->in->in_ni);
+            data->in = NULL;
+        }
+#endif
         if (data->m != NULL) {
             //            bus_dmamap_sync(sc->sc_dmat, data->map, 0,
             //                data->map->dm_mapsize, BUS_DMASYNC_POSTWRITE);
@@ -2871,6 +2878,10 @@ iwx_reset_tx_ring(struct iwx_softc *sc, struct iwx_tx_ring *ring)
         }
     }
 
+#ifdef AIRPORT_WCL
+    if (awdlCoexOrphanQueue >= 0 && ring->qid == awdlCoexOrphanQueue)
+        awdlCoexOrphanQueue = -1;
+#endif
     if (ring->qid == IWX_INVALID_QUEUE || !ring->desc) {
         return;
     }
@@ -3776,9 +3787,44 @@ iwx_tvqm_enable_txq(struct iwx_softc *sc, int tid, int ssn, uint32_t size, int s
         goto fail;
     }
 #ifdef AIRPORT_VTD
-    if (fwqid <= sc->first_data_qid || sc->txq[fwqid].queued || wr_idx >= getTxQueueSize()) {
-        err = -EIO;
-        goto fail;
+    {
+        bool spareCoexSlot = false;
+#ifdef AIRPORT_WCL
+        /*
+         * AWDL coex listener (ForbiddenItlwm): in station mode the firmware gives the listener's
+         * station a low queue number. Accepted only if no host queue owns it: not the command
+         * queue, not the station's management queue, no TID's, not an orphaned coex queue; and only
+         * for the setup that asked (a stale answer installs nothing).
+         */
+        if (awdlCoexTx && sta_id == IWX_MONITOR_STA_ID && sc->sc_ic.ic_opmode == IEEE80211_M_STA) {
+            awdlCoexQueueAssigned = fwqid;
+            awdlCoexQueueWritePointer = wr_idx;
+            if (!awdlCoexSetupCurrent(sc->sc_generation)) {
+                awdlCoexQueueStage = "stale";
+                err = -ECANCELED;
+                goto fail;
+            }
+            bool used = fwqid <= 0 || fwqid == IWX_DQA_CMD_QUEUE || fwqid == sc->first_data_qid ||
+                fwqid == awdlCoexOrphanQueue;
+            for (int t = 0; t < int(nitems(sc->sc_tid_data)); ++t)
+                used |= sc->sc_tid_data[t].qid == fwqid;
+            if (used) {
+                awdlCoexQueueStage = "queue-owned";
+                err = -EIO;
+                goto fail;
+            }
+            spareCoexSlot = true;
+            if (sc->txq[fwqid].queued)
+                awdlCoexQueueStage = "queue-busy";
+            else if (wr_idx >= getTxQueueSize())
+                awdlCoexQueueStage = "write-pointer";
+        }
+#endif
+        if ((fwqid <= sc->first_data_qid && !spareCoexSlot) || sc->txq[fwqid].queued ||
+            wr_idx >= getTxQueueSize()) {
+            err = -EIO;
+            goto fail;
+        }
     }
 #endif
     ring->cur = wr_idx;
@@ -6197,6 +6243,13 @@ iwx_rx_tx_cmd_single(struct iwx_softc *sc, struct iwx_rx_packet *pkt,
     
     if (txfail) {
         DPRINTFN(3, ("%s %d OUTPUT_ERROR type=%d status=%d\n", __FUNCTION__, __LINE__, txd->type, status));
+#ifdef AIRPORT_WCL
+        /* The coex listener's frames are AWDL's, not Wi-Fi's: not en0 errors, no antenna move. */
+        const bool coexFrame = (awdlCoexQueue >= 0 && tx_resp->tx_queue == awdlCoexQueue) ||
+            (awdlCoexOrphanQueue >= 0 && tx_resp->tx_queue == awdlCoexOrphanQueue);
+        if (coexFrame)
+            return;
+#endif
         ifp->netStat->outputErrors++;
         if (txd->type == IEEE80211_FC0_TYPE_MGT)
             iwx_toggle_tx_ant(sc, &sc->sc_mgmt_last_antenna_idx);
@@ -6412,6 +6465,11 @@ iwx_rx_tx_cmd(struct iwx_softc *sc, struct iwx_rx_packet *pkt,
     bus_dmamap_sync(sc->sc_dmat, data->map, 0, IWX_RBUF_SIZE,
                     BUS_DMASYNC_POSTREAD);
     
+#ifdef AIRPORT_WCL
+    /* The coex listener's completions say nothing about the station's transmit path. */
+    const bool coexQueue = awdlCoexOwnsRing(ring);
+    if (!coexQueue)
+#endif
     sc->sc_tx_timer = 0;
 
     if (tx_resp->frame_count > 1) {
@@ -6431,6 +6489,11 @@ iwx_rx_tx_cmd(struct iwx_softc *sc, struct iwx_rx_packet *pkt,
         memcpy(&ssn, &tx_resp->status + tx_resp->frame_count, sizeof(ssn));
         ssn = le32toh(ssn) & 0xfff;
         idx = IWX_AGG_SSN_TO_TXQ_IDX(ssn, ring->ring_count);
+#ifdef AIRPORT_WCL
+        /* The coex listener's queue keeps its own accounting (ForbiddenItlwm), attributed per slot. */
+        if (coexQueue && !awdlCoexTxDone(sc, pkt, tx_resp, ring, qid, idx, ssn))
+            return;
+#endif
         if (!itlTxCompletionValid(ring->tail, ring->queued, idx, ring->ring_count))
             return;
         if (idx == ring->tail)
@@ -7196,6 +7259,14 @@ iwx_tx_fill_cmd(struct iwx_softc *sc, struct iwx_node *in,
     uint8_t hwrate;
 
     *flags = 0;
+#ifdef AIRPORT_WCL
+    /* AWDL coex backend: fixed rates on the listener's queue (its station has no rate table). */
+    if (awdlCoexSending) {
+        const struct iwx_rate *coexRate = awdlCoexTxRate(sc, in, wh, flags, rate_n_flags, &ridx);
+        if (coexRate)
+            return coexRate;
+    } else
+#endif
     if (IEEE80211_IS_MULTICAST(wh->i_addr1) ||
         type != IEEE80211_FC0_TYPE_DATA) {
         /* for non-data, use the lowest supported rate */
@@ -7231,10 +7302,19 @@ iwx_tx_fill_cmd(struct iwx_softc *sc, struct iwx_node *in,
             hwrate = ridx;
         } else {
             rate_flags |= IWX_RATE_MCS_LEGACY_OFDM_MSK;
+#ifdef AIRPORT_WCL
+            /* The coex listener's rate needn't be in the BSS's rate set. */
+            if (awdlCoexSending)
+                hwrate = iwx_rate2idx(iwx_rates[ridx].rate);
+            else
+#endif
             hwrate = iwx_rate2idx(iwx_ridx2rate(rs, ridx) & IEEE80211_RATE_VAL);
         }
     } else if (IWX_RIDX_IS_CCK(ridx))
         rate_flags |= IWX_RATE_MCS_CCK_MSK_V1;
+#ifdef AIRPORT_WCL
+    if (!awdlCoexSending)
+#endif
     XYLog("%s hwrate: %d ridx: %d rate: %d minrate: %d\n", __FUNCTION__, hwrate, ridx, iwx_ridx2rate(rs, ridx) & IEEE80211_RATE_VAL, ieee80211_min_basic_rate(ic));
     *rate_n_flags = htole32(rate_flags | hwrate);
     
@@ -7278,8 +7358,18 @@ iwx_tx_update_byte_tbl(struct iwx_softc *sc, struct iwx_tx_ring *txq, int idx, u
 }
 
 int ItlIwx::
-iwx_tx(struct iwx_softc *sc, mbuf_t m, struct ieee80211_node *ni, int ac)
+iwx_tx(struct iwx_softc *sc, mbuf_t m, struct ieee80211_node *ni, int ac, int coexQueue)
 {
+#ifdef AIRPORT_WCL
+    /* AWDL coex backend: its own queue takes only valid AWDL frames, from the engine, in the gate. */
+    if (coexQueue >= 0 && !awdlCoexTxAllowed(sc, m, coexQueue))
+        return EACCES;
+#else
+    if (coexQueue >= 0) {
+        mbuf_freem(m);
+        return EACCES;
+    }
+#endif
     struct ieee80211com *ic = &sc->sc_ic;
     struct iwx_node *in = (struct iwx_node *)ni;
     struct iwx_tx_ring *ring;
@@ -7319,10 +7409,11 @@ iwx_tx(struct iwx_softc *sc, mbuf_t m, struct ieee80211_node *ni, int ac)
         hdrlen = ieee80211_get_hdrlen(wh);
     
     tid = IWX_MGMT_TID;
-    qid = sc->first_data_qid;
+    qid = coexQueue >= 0 ? coexQueue : sc->first_data_qid;
 
     /* Put QoS frames on the data queue which maps to their TID. */
-    if (ieee80211_has_qos(wh)) {
+    /* Not the coex listener's frames: the BSS node's aggregation queues belong to the station. */
+    if (ieee80211_has_qos(wh) && coexQueue < 0) {
         struct ieee80211_tx_ba *ba;
         uint16_t qos = ieee80211_get_qos(wh);
         uint8_t tid = qos & IEEE80211_QOS_TID;
@@ -7452,6 +7543,10 @@ iwx_tx(struct iwx_softc *sc, mbuf_t m, struct ieee80211_node *ni, int ac)
     data->m = m;
     data->in = in;
     data->type = type;
+#ifdef AIRPORT_WCL
+    if (coexQueue >= 0)
+        awdlCoexNoteSubmitted(sc, coexQueue, idx, wh);
+#endif
 
     DPRINTFN(3, ("sending data: 嘤嘤嘤 tid=%d qid=%d idx=%d queued=%d len=%d nsegs=%d flags=0x%08x rate_n_flags=0x%08x offload_assist=%u\n",
           tid, ring->qid, ring->cur, ring->queued, totlen, nsegs, le32toh(flags),
@@ -7507,7 +7602,8 @@ iwx_tx(struct iwx_softc *sc, mbuf_t m, struct ieee80211_node *ni, int ac)
     }
     
 #ifdef AIRPORT_WCL
-    if (type == IEEE80211_FC0_TYPE_DATA && !(subtype & IEEE80211_FC0_SUBTYPE_NODATA))
+    /* Infra statistics only: the coex listener's AWDL frames are not en0's traffic. */
+    if (coexQueue < 0 && type == IEEE80211_FC0_TYPE_DATA && !(subtype & IEEE80211_FC0_SUBTYPE_NODATA))
         ++ic->ic_wcl_tx_packets[trafficAC];
 #endif
     return 0;

@@ -407,6 +407,12 @@ bool AirportItlwm::start(IOService *provider)
         if (airportAWDLCoexEnabled()) {
             XYLog("AWDL coex backend selected (-itlawdlcoex)\n");
             fHalService->get80211Controller()->ic_awdl_coex_on = 1;
+            // They look up awdl0 on every call (inside the gate), so they stay valid while awdl0
+            // comes and goes; destroyAWDLInterface clears fAWDLIf in the gate.
+            fHalService->get80211Controller()->ic_awdl_coex_sync = awdlCoexSync;
+            fHalService->get80211Controller()->ic_awdl_coex_pop = awdlCoexPop;
+            fHalService->get80211Controller()->ic_awdl_coex_queued = awdlCoexQueued;
+            fHalService->get80211Controller()->ic_awdl_coex_service = awdlCoexService;
         }
     }
     setProperty("AWDLBackend", airportAWDLBackendName());
@@ -569,6 +575,52 @@ int AirportItlwm::awdlDataFrameHandler(struct ieee80211com *ic, mbuf_t m, struct
     return that->fAWDLBsdIf->inputAWDLData(m, that->fAWDLIf);
 #else
     return 0;
+#endif
+}
+
+// AWDL coex backend: what the HAL's listener engine pulls, in the command gate. Nothing while awdl0
+// doesn't exist (the engine then counts the frame as not ready).
+size_t AirportItlwm::awdlCoexSync(struct ieee80211com *ic, uint8_t *buf, size_t cap, uint64_t nowUs)
+{
+#if defined(AIRPORT_AWDL)
+    AirportItlwm *that = OSDynamicCast(AirportItlwm, ic->ic_ac.ac_if.controller);
+    if (!that || !that->fAWDLIf || !buf)
+        return 0;
+    return that->fAWDLIf->coexBuildSync(buf, cap, nowUs);
+#else
+    return 0;
+#endif
+}
+
+size_t AirportItlwm::awdlCoexPop(struct ieee80211com *ic, uint8_t *buf, size_t cap, const uint8_t *holdFor,
+                                 int holdEverySize)
+{
+#if defined(AIRPORT_AWDL)
+    AirportItlwm *that = OSDynamicCast(AirportItlwm, ic->ic_ac.ac_if.controller);
+    if (!that || !that->fAWDLIf || !buf)
+        return 0;
+    return that->fAWDLIf->coexPopData(buf, cap, holdFor, holdEverySize != 0);
+#else
+    return 0;
+#endif
+}
+
+unsigned AirportItlwm::awdlCoexQueued(struct ieee80211com *ic)
+{
+#if defined(AIRPORT_AWDL)
+    AirportItlwm *that = OSDynamicCast(AirportItlwm, ic->ic_ac.ac_if.controller);
+    return that && that->fAWDLIf ? that->fAWDLIf->coexQueued() : 0;
+#else
+    return 0;
+#endif
+}
+
+void AirportItlwm::awdlCoexService(struct ieee80211com *ic)
+{
+#if defined(AIRPORT_AWDL)
+    AirportItlwm *that = OSDynamicCast(AirportItlwm, ic->ic_ac.ac_if.controller);
+    if (that && that->fAWDLIf)
+        that->fAWDLIf->coexService();
 #endif
 }
 

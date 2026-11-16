@@ -425,9 +425,22 @@ public:
     // Ethernet frames from awdl0, sent as AWDL data frames during a dwell.
     void enqueueData(mbuf_t m);
     // Pull model: packets are taken from the stack's queue only while fewer than
-    // kDataQueuePull wait here, so the stack's queue (pacing, AQM) stays in charge.
+    // fDataQueuePull wait here, so the stack's queue (pacing, AQM) stays in charge.
+    // 32 on the P2P path; 192 with the coex backend (itlawdlcoexpull=), where the HAL
+    // drains this queue from its own task.
     enum { kDataQueuePull = 32 };
-    bool dataQueueHasRoom() const { return fDataQCount < kDataQueuePull; }
+    unsigned fDataQueuePull = kDataQueuePull;
+    bool dataQueueHasRoom() const { return fDataQCount < fDataQueuePull; }
+    // AWDL coex backend (-itlawdlcoex): the HAL pulls frames through ic_awdl_coex_*.
+    // All of these run in the controller's command gate.
+    size_t coexBuildSync(uint8_t *buf, size_t cap, uint64_t nowUs);
+    size_t coexPopData(uint8_t *buf, size_t cap, const uint8_t *holdFor, bool holdEverySize);
+    unsigned coexQueued() const { return fDataQCount; }
+    void coexService() { resumeOutput(); }
+    uint32_t fCoexSyncSeq = 0;
+    uint64_t fCoexSyncPSF = 0, fCoexSyncMI = 0, fCoexSyncNotReady = 0;
+    uint64_t fCoexPopped = 0, fCoexPopHeld = 0, fCoexPopEmpty = 0;
+    void publishCoexState();
     void noteOutputStalled() { fOutputStalled = true; fOutputStalls++; }
     bool fOutputStalled = false;
     uint64_t fOutputStalls = 0, fOutputResumes = 0;

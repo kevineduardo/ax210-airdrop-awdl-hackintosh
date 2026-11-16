@@ -11,6 +11,7 @@
 #include "AirportItlwmV2.hpp"
 #include "AirportItlwmAWDLInterface.hpp"
 #include "AirportItlwmAWDLBuildGuard.hpp"
+#include "AirportItlwmAWDLFrame.hpp"
 #include "AirportItlwmSkywalkInterface.hpp"
 #include <IOKit/IOUserClient.h>
 
@@ -2303,20 +2304,30 @@ buildAWDLFrame(uint8_t *buf, size_t cap, bool mi, uint64_t nowUs)
     uint16_t curAW = (uint16_t)(seq + ((int64_t)nowUs - start) / ((int64_t)period * 1024));
     uint16_t down = (uint16_t)((start + slot - (int64_t)nowUs + 1023) / 1024);
     unsigned count = fChanSeqValid ? fChanSeq[kChanSeqCount] : 0;
+    // Coex backend (-itlawdlcoex): the listener stays on one channel, so every slot, the next AW
+    // channel and the master channel name it, as ForbiddenItlwm's fixed local schedule does. 0 on
+    // the P2P path, which keeps macOS's sequence.
+    const ieee80211com *coexIc = halIc();
+    const uint8_t coexChan = coexIc ? coexIc->ic_awdl_coex_chan : 0;
+    const uint8_t coexClass = coexIc ? coexIc->ic_awdl_coex_class : 0;
     auto chanAt = [&](uint16_t s) -> uint8_t {
+        if (coexChan)
+            return coexChan;
         if (!count)
             return 6;
         const apple80211_channel *c = (const apple80211_channel *)(fChanSeq + kChanSeqEntries) + (s / pm) % count;
         return (uint8_t)c->channel;
     };
     const ether_addr &master = isSyncMaster() ? fMac : fSyncMaster;
-    uint8_t masterChan = fMasterChannel ? (uint8_t)fMasterChannel : 6;
+    uint8_t masterChan = coexChan ? coexChan : fMasterChannel ? (uint8_t)fMasterChannel : 6;
 
     uint8_t *p = af + kAWDLFixedHeaderLen;
     auto put16 = [](uint8_t *q, uint16_t v) { q[0] = v & 0xff; q[1] = v >> 8; };
     // Global operating class of a 20 MHz channel (IEEE 802.11 Annex E).
-    auto opClass = [](uint8_t c) -> uint8_t {
+    auto opClass = [&](uint8_t c) -> uint8_t {
         if (!c) return 0;
+        // The listener at 80 MHz on 149: class 128, as the iPhone advertises its own 80 MHz slots.
+        if (coexChan && coexClass && c == coexChan) return coexClass;
         if (c <= 13) return 81;
         if (c <= 48) return 115;
         if (c <= 64) return 118;
@@ -2331,10 +2342,10 @@ buildAWDLFrame(uint8_t *buf, size_t cap, bool mi, uint64_t nowUs)
         // fill +9 (255 = 0xffff, repeat the current channel).
         q[2] = fChanSeqValid ? fChanSeq[8] : 0;
         q[3] = fChanSeqValid ? fChanSeq[kChanSeqStep] : (uint8_t)(pm - 1);
-        uint8_t fill = fChanSeqValid ? fChanSeq[9] : 255;
+        uint8_t fill = coexChan ? coexChan : fChanSeqValid ? fChanSeq[9] : 255;
         put16(q + 4, fill == 255 ? 0xffff : (uint16_t)(fill | (opClass(fill) << 8)));
         for (unsigned i = 0; i < 16; i++) {
-            uint8_t c = count ? chanAt((uint16_t)(i * pm)) : 6;
+            uint8_t c = count || coexChan ? chanAt((uint16_t)(i * pm)) : 6;
             q[6 + 2 * i] = c;
             q[7 + 2 * i] = opClass(c);
         }
@@ -2520,24 +2531,12 @@ flushData()
                     fGateSkips++;
                 if (fAwGate)
                     fAwGateSent++;
-                memset(frame, 0, hdr + llc + ad);
-                struct ieee80211_frame *wh = (struct ieee80211_frame *)frame;
-                wh->i_fc[0] = IEEE80211_FC0_VERSION_0 | IEEE80211_FC0_TYPE_DATA | IEEE80211_FC0_SUBTYPE_DATA;
-                memcpy(wh->i_addr1, eh, 6);
-                memcpy(wh->i_addr2, &fMac, 6);
-                memcpy(wh->i_addr3, kAWDLBssid, 6);
-                uint16_t sc = (uint16_t)(fTxSeq++ << 4);
-                wh->i_seq[0] = sc & 0xff;
-                wh->i_seq[1] = sc >> 8;
-                uint8_t *l = frame + hdr;
-                l[0] = 0xaa; l[1] = 0xaa; l[2] = 0x03;
-                l[3] = 0x00; l[4] = 0x17; l[5] = 0xf2;
-                l[6] = 0x08; l[7] = 0x00;
-                uint8_t *a = l + llc;
-                a[0] = 0x03; a[1] = 0x04;
-                a[2] = fDataSeq & 0xff; a[3] = fDataSeq >> 8;
-                a[6] = eh[12]; a[7] = eh[13];
-                mbuf_copydata(m, 14, plen - 14, a + ad);
+                // Header bytes from AirportItlwmAWDLFrame.hpp (shared with the coex backend and
+                // host-tested against ForbiddenItlwm's decoder).
+                static_assert(AirportAWDLFrame::kDataHeaderLen == sizeof(struct ieee80211_frame) + 8 + 8,
+                              "AWDL data header layout");
+                AirportAWDLFrame::writeDataHeader(frame, eh, (const uint8_t *)&fMac, fTxSeq++, fDataSeq);
+                mbuf_copydata(m, 14, plen - 14, frame + hdr + llc + ad);
                 int err = ic->ic_awdl_tx(ic, fTxChan, frame, hdr + llc + ad + plen - 14);
                 if (err == EAGAIN) {
                     fDataTxDeferred++;
@@ -2580,7 +2579,7 @@ flushData()
 void AirportItlwmAWDLInterface::
 resumeOutput()
 {
-    if (!fOutputStalled || fDataQCount > kDataQueuePull / 2)
+    if (!fOutputStalled || fDataQCount > fDataQueuePull / 2)
         return;
     fOutputStalled = false;
     fOutputResumes++;
@@ -2964,6 +2963,15 @@ withController(AirportItlwm *controller, ether_addr *mac)
     // Which listen/TX backend the HAL runs in this boot (the coex backend leaves the
     // P2P listen callbacks unset, so maybeListen/startListen/sendAWDLFrame stay idle).
     ifp->setProperty("AWDLBackend", airportAWDLBackendName());
+    if (airportAWDLCoexEnabled()) {
+        // The coex backend's HAL task drains the queue every 2 ms while data moves, and a 64-frame
+        // Block Ack window needs more than 32 frames waiting (itlawdlcoexpull=, 32 to 240).
+        unsigned pull = 192;
+        if (PE_parse_boot_argn("itlawdlcoexpull", &pull, sizeof(pull)) && (pull < 32 || pull > 240))
+            pull = 192;
+        ifp->fDataQueuePull = pull;
+        ifp->setProperty("AWDLCoexPull", pull, 32);
+    }
     // Runs on the controller work loop, like the rx path and the ioctls, so the
     // timeline state needs no extra locking.
     if (!awTimelineAllowed())
@@ -3755,3 +3763,111 @@ AWDL_SET_STUB(AWDL_CONFIG, apple80211_awdl_config_request)
 AWDL_SET_STUB(AWDL_RTG_PEER_STATS_CONFIG, apple80211_rtg_peer_stats_cfg)
 
 #endif /* AIRPORT_AWDL */
+
+// ---------------------------------------------------------------------------------------------------
+// AWDL coex backend (-itlawdlcoex). The HAL's listener engine (ported from ForbiddenItlwm by
+// retropineaple, GPL-2.0) pulls its frames from here, in the controller's command gate, through the
+// ic_awdl_coex_* callbacks AirportItlwm installs. The P2P path's listen and TX machinery stays idle
+// in this mode: the HAL never installs ic_awdl_listen / ic_awdl_tx / ic_awdl_dwell_state.
+// ---------------------------------------------------------------------------------------------------
+
+// One sync frame: macOS's master indication (MI) and the periodic sync frame (PSF) alternate, as
+// ForbiddenItlwm's glue does. A PSF is left out where the P2P path leaves it out (AF TX mode 3 and
+// not the sync master). 0 until macOS has handed over a template.
+size_t AirportItlwmAWDLInterface::
+coexBuildSync(uint8_t *buf, size_t cap, uint64_t nowUs)
+{
+    const bool psf = fSyncTmplLen && (fAfTxMode != 3 || isSyncMaster());
+    const bool mi = fMITmplLen != 0;
+    if (!psf && !mi) {
+        fCoexSyncNotReady++;
+        return 0;
+    }
+    const bool sendMI = mi && (!psf || (fCoexSyncSeq++ & 1));
+    const size_t len = buildAWDLFrame(buf, cap, sendMI, nowUs);
+    if (!len)
+        return 0;
+    if (sendMI)
+        fCoexSyncMI++;
+    else
+        fCoexSyncPSF++;
+    if (((fCoexSyncMI + fCoexSyncPSF) & 0x3f) == 1)
+        publishCoexState();
+    return len;
+}
+
+// One AWDL data frame for the HAL, oldest first. Frames older than kDataMaxAgeUs are dropped as in
+// flushData. Frames for holdFor (unicast to it, every size with holdEverySize, else only frames of
+// 1200 bytes or more) stay queued, and so does every later frame for the same destination, so the
+// order per destination never changes; a frame for another destination may still go. The bookkeeping
+// is flushData's. Returns the 802.11 frame length, or 0 when nothing can go now.
+size_t AirportItlwmAWDLInterface::
+coexPopData(uint8_t *buf, size_t cap, const uint8_t *holdFor, bool holdEverySize)
+{
+    bool sent = false, heldDest = false;
+    size_t out = 0;
+    unsigned count = fDataQCount, w = 0;
+    for (unsigned i = 0; i < count; i++) {
+        unsigned idx = (fDataQHead + i) % kDataQueueLen;
+        mbuf_t m = fDataQ[idx];
+        size_t plen = mbuf_pkthdr_len(m);
+        bool keep = sent;
+        if (!keep) {
+            uint8_t eh[AirportAWDLFrame::kEthernetHeaderLen] = {};
+            const bool haveEh = plen >= sizeof(eh) && mbuf_copydata(m, 0, sizeof(eh), eh) == 0;
+            const size_t flen = AirportAWDLFrame::frameLength(plen);
+            if (hostUs() - fDataQUs[idx] > kDataMaxAgeUs) {
+                fDataTxDropStale++;
+            } else if (!haveEh || !flen || flen > cap) {
+                fDataTxErr++;
+            } else if (holdFor && !(eh[0] & 1) && !memcmp(eh, holdFor, 6) &&
+                       (heldDest || holdEverySize || flen >= 1200)) {
+                keep = true;
+                heldDest = true;
+                fCoexPopHeld++;
+            } else {
+                AirportAWDLFrame::writeDataHeader(buf, eh, (const uint8_t *)&fMac, fTxSeq++, fDataSeq);
+                mbuf_copydata(m, sizeof(eh), plen - sizeof(eh), buf + AirportAWDLFrame::kDataHeaderLen);
+                out = flen;
+                sent = true;
+                fDataTx++;
+                fDataSeq++;
+                fCoexPopped++;
+                noteDataSent(idx);
+                if (fController && fController->fAWDLBsdIf && fController->fAWDLBsdIf->getIfnet())
+                    ifnet_stat_increment_out(fController->fAWDLBsdIf->getIfnet(), 1, 0, 0);
+            }
+        }
+        if (keep) {
+            unsigned to = (fDataQHead + w) % kDataQueueLen;
+            if (to != idx) {
+                fDataQ[to] = fDataQ[idx];
+                fDataQUs[to] = fDataQUs[idx];
+                fDataQMc[to] = fDataQMc[idx];
+                fDataQ[idx] = nullptr;
+            }
+            w++;
+        } else {
+            mbuf_freem(m);
+            fDataQ[idx] = nullptr;
+        }
+    }
+    fDataQCount = w;
+    if (!sent)
+        fCoexPopEmpty++;
+    resumeOutput();
+    return out;
+}
+
+void AirportItlwmAWDLInterface::
+publishCoexState()
+{
+    setProperty("AWDLCoexSyncPSF", fCoexSyncPSF, 64);
+    setProperty("AWDLCoexSyncMI", fCoexSyncMI, 64);
+    setProperty("AWDLCoexSyncNotReady", fCoexSyncNotReady, 64);
+    setProperty("AWDLCoexDataPopped", fCoexPopped, 64);
+    setProperty("AWDLCoexDataHeld", fCoexPopHeld, 64);
+    setProperty("AWDLDataTx", fDataTx, 64);
+    setProperty("AWDLDataTxQueued", fDataTxQueued, 64);
+    setProperty("AWDLDataTxDropFull", fDataTxDropFull, 64);
+}

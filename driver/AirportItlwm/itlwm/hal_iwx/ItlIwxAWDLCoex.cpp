@@ -137,6 +137,75 @@ static void awdlCoexPublish()
         root->setProperty("ITLAWDLCoexForwardRefused", awdlCoexForwardRefused, 32);
         root->setProperty("ITLAWDLCoexForwardMalformed", awdlCoexForwardMalformed, 32);
     }
+    if (awdlCoexTx) {
+        root->setProperty("ITLAWDLCoexStaResult", awdlCoexStaResult, 32);
+        root->setProperty("ITLAWDLCoexQueueResult", awdlCoexQueueResult, 32);
+        root->setProperty("ITLAWDLCoexQueueStage", awdlCoexQueueStage);
+        root->setProperty("ITLAWDLCoexQueueAssigned", uint32_t(awdlCoexQueueAssigned), 32);
+        root->setProperty("ITLAWDLCoexQueueWritePointer", awdlCoexQueueWritePointer, 32);
+        root->setProperty("ITLAWDLCoexSetupAttempts", awdlCoexSetupAttempts, 32);
+        root->setProperty("ITLAWDLCoexTxHalted", awdlCoexTxHalted);
+        root->setProperty("ITLAWDLCoexSetupAborts", awdlCoexSetupAborts, 32);
+        root->setProperty("ITLAWDLCoexBadCompletions", awdlCoexBadCompletions, 32);
+        root->setProperty("ITLAWDLCoexLastSlot", uint32_t(awdlCoexLastSlot), 32);
+        root->setProperty("ITLAWDLCoexLastBoundary", uint32_t(awdlCoexLastBoundary), 32);
+        root->setProperty("ITLAWDLCoexLastSsn", awdlCoexLastSsn, 32);
+        if (awdlCoexFaultSnapshot[0])
+            root->setProperty("ITLAWDLCoexFault", awdlCoexFaultSnapshot);
+        root->setProperty("ITLAWDLCoexOrphanQueue", uint32_t(awdlCoexOrphanQueue), 32);
+        root->setProperty("ITLAWDLCoexTxBuilt", awdlCoexTxBuilt, 32);
+        root->setProperty("ITLAWDLCoexTxNotReady", awdlCoexTxNotReady, 32);
+        root->setProperty("ITLAWDLCoexTxBuildRejected", awdlCoexTxBuildRejected, 32);
+        root->setProperty("ITLAWDLCoexRefusedReason", awdlCoexRefusedReason, 32);
+        root->setProperty("ITLAWDLCoexRefusedChannelFlags", awdlCoexRefusedChannelFlags, 32);
+        if (awdlCoexRefusalSnapshot[0])
+            root->setProperty("ITLAWDLCoexLastRefusal", awdlCoexRefusalSnapshot);
+        root->setProperty("ITLAWDLCoexTxSubmitted", awdlCoexTxSubmitted, 32);
+        root->setProperty("ITLAWDLCoexTxSubmitErrors", awdlCoexTxSubmitErrors, 32);
+        root->setProperty("ITLAWDLCoexTxOK", awdlCoexTxOK, 32);
+        root->setProperty("ITLAWDLCoexTxFailed", awdlCoexTxFailed, 32);
+        root->setProperty("ITLAWDLCoexTxStuck", awdlCoexTxStuck, 32);
+        root->setProperty("ITLAWDLCoexTxPauses", awdlCoexTxPauses, 32);
+        root->setProperty("ITLAWDLCoexWedgedRebuilds", awdlCoexWedgedRebuilds, 32);
+        root->setProperty("ITLAWDLCoexTxRefusedChannel", awdlCoexTxRefusedChannel, 32);
+        root->setProperty("ITLAWDLCoexLateCompletions", awdlCoexLateCompletions, 32);
+        root->setProperty("ITLAWDLCoexIdleSyncFrames", awdlCoexIdleSyncFrames, 32);
+        root->setProperty("ITLAWDLCoexStatusIdxHits", awdlCoexStatusIdxHits, 32);
+        root->setProperty("ITLAWDLCoexStatusIdxMisses", awdlCoexStatusIdxMisses, 32);
+        root->setProperty("ITLAWDLCoexMultiReclaims", awdlCoexMultiReclaims, 32);
+        root->setProperty("ITLAWDLCoexReclaimUnknown", awdlCoexReclaimUnknown, 32);
+        root->setProperty("ITLAWDLCoexSyncReclaimedUnknown", awdlCoexSyncReclaimedUnknown, 32);
+    }
+    if (awdlCoexData) {
+        root->setProperty("ITLAWDLCoexDataTx", awdlCoexDataTx, 32);
+        root->setProperty("ITLAWDLCoexDataTxErrors", awdlCoexDataTxErrors, 32);
+        root->setProperty("ITLAWDLCoexDataOK", awdlCoexDataOK, 32);
+        root->setProperty("ITLAWDLCoexDataFailed", awdlCoexDataFailed, 32);
+        root->setProperty("ITLAWDLCoexDataPumps", awdlCoexDataPumps, 32);
+        root->setProperty("ITLAWDLCoexUcastOK", awdlCoexUcastOK, 32);
+        root->setProperty("ITLAWDLCoexUcastFailed", awdlCoexUcastFailed, 32);
+        root->setProperty("ITLAWDLCoexGroupOK", awdlCoexGroupOK, 32);
+        root->setProperty("ITLAWDLCoexGroupFailed", awdlCoexGroupFailed, 32);
+        root->setProperty("ITLAWDLCoexRateStep", uint32_t(awdlCoexRateStep), 32);
+        root->setProperty("ITLAWDLCoexRateUps", awdlCoexRateUps, 32);
+        root->setProperty("ITLAWDLCoexRateDowns", awdlCoexRateDowns, 32);
+        root->setProperty("ITLAWDLCoexVhtFrames", awdlCoexVhtFrames, 32);
+        root->setProperty("ITLAWDLCoexGate", awdlCoexGate);
+        root->setProperty("ITLAWDLCoexGateHolds", awdlCoexGateHolds, 32);
+        root->setProperty("ITLAWDLCoexGateAwayTicks", awdlCoexGateAwayTicks, 32);
+        root->setProperty("ITLAWDLCoexGateDozeTicks", awdlCoexGateDozeTicks, 32);
+        root->setProperty("ITLAWDLCoexGateForced", awdlCoexGateForced, 32);
+        root->setProperty("ITLAWDLCoexAssumeZero", awdlCoexAssumeZero);
+        root->setProperty("ITLAWDLCoexScheduleKnown", awdlCoexScheduleCurrent() && awdlCoexPeerSchedule.known() &&
+                          awdlCoexPeerSchedule.fresh(awdlUptimeUS()));
+        root->setProperty("ITLAWDLCoexScheduleCalibrated", awdlCoexScheduleCalibrated);
+        root->setProperty("ITLAWDLCoexScheduleRefutations", awdlCoexPeerSchedule.refutations, 32);
+        root->setProperty("ITLAWDLCoexPeerPresentEntries", awdlCoexPeerSchedule.presentEntries(), 32);
+        root->setProperty("ITLAWDLCoexPeerSyncFrames", awdlCoexPeerSyncFrames, 32);
+        root->setProperty("ITLAWDLCoexPeerSequenceRejected", awdlCoexPeerSequenceRejected, 32);
+        root->setProperty("ITLAWDLCoexPeerSequenceChanges", awdlCoexPeerSchedule.sequenceChanges, 32);
+        root->setProperty("ITLAWDLCoexPeerDecalibrations", awdlCoexPeerSchedule.decalibrations, 32);
+    }
     root->setProperty("ITLAWDLCoexReclaimRefused", awdlReclaimRefused, 32);
 }
 
@@ -222,6 +291,13 @@ awdlCoexAttach(struct iwx_softc *sc)
     awdlCoexProbe = true;
     awdlCoexRx = true;
     awdlCoexDataRxOn = true;
+    // Phase 2: the listener's own station and queue, macOS's sync frames every 45 to 100 ms, awdl0's
+    // data one frame at a time with the rate ladder, and the send gate.
+    awdlCoexTx = true;
+    awdlCoexData = true;
+    awdlCoexGate = !PE_parse_boot_argn("-itlawdlcoexnogate", &dummy, sizeof(dummy));
+    awdlCoexAssumeZero = !PE_parse_boot_argn("-itlawdlcoexcalwait", &dummy, sizeof(dummy));
+    awdlCoexPeerSchedule.assumeZero = awdlCoexAssumeZero;
     awdlCoexShared = PE_parse_boot_argn("-itlawdlcoexshared", &dummy, sizeof(dummy));
     awdlCoexMulti = !awdlCoexShared;
     awdlCoexSameBand = PE_parse_boot_argn("-itlawdlsameband", &dummy, sizeof(dummy));
@@ -581,19 +657,50 @@ awdlCoexTxTeardown(struct iwx_softc *sc)
     return flushErr ? flushErr : rmErr;
 }
 
-// What a move of the listener's channel resets (the data rate ladder and the peer's schedule, from phase 2).
+// What a move of the listener's channel resets: the data rate ladder and the peer's schedule.
 static void awdlCoexMoved(struct iwx_softc *)
 {
+    awdlCoexRateStep = 0;
+    awdlCoexRateWindowOK = awdlCoexRateWindowFailed = 0;
+    awdlCoexPeerSchedule.reset();
 }
 
-// The peer's schedule from its sync frames (phase 2: the send gate).
-static void awdlCoexNoteSchedule(const uint8_t *, size_t, uint64_t)
+// The peer's schedule, from its sync frames, as ForbiddenItlwm's dedicated mode tracks it: its Block Ack
+// peer once there is one, otherwise the first peer heard on our channel.
+static void awdlCoexNoteSchedule(const uint8_t *cf, size_t coexLen, uint64_t heardUS)
 {
+    if ((!awdlCoexBaPeerAdded || ItlAWDL::sameAddress(cf + 10, awdlCoexBaPeer)) &&
+        (ItlAWDL::sameAddress(cf + 10, awdlCoexSchedPeer) || !awdlCoexScheduleCurrent() ||
+         !awdlCoexPeerSchedule.fresh(heardUS))) {
+        ItlAWDL::PeerSyncInfo peerSync{};
+        bool badSequence = false;
+        if (ItlAWDL::peerSyncFromAction(cf, coexLen, &peerSync, &badSequence)) {
+            if (!awdlCoexScheduleCurrent() || !ItlAWDL::sameAddress(cf + 10, awdlCoexSchedPeer)) {
+                awdlCoexPeerSchedule.reset();
+                awdlCoexSchedToken = awdlCoexToken;
+                memcpy(awdlCoexSchedPeer, cf + 10, sizeof(awdlCoexSchedPeer));
+            }
+            awdlCoexPeerSchedule.notePeerFrame(heardUS);
+            awdlCoexPeerSchedule.note(peerSync, heardUS, uint8_t(awdlCoexChannel));
+            ++awdlCoexPeerSyncFrames;
+        } else if (awdlCoexScheduleCurrent() && ItlAWDL::sameAddress(cf + 10, awdlCoexSchedPeer)) {
+            if (badSequence) {
+                ++awdlCoexPeerSequenceRejected;
+                awdlCoexPeerSchedule.invalidate();
+            } else {
+                awdlCoexPeerSchedule.notePeerFrame(heardUS);
+            }
+        }
+    }
 }
 
-// Data received from a peer (phase 2: the send gate's "awake" test).
-static void awdlCoexNoteDataFrom(const uint8_t *, uint64_t)
+// Data received from a peer: the schedule peer is awake (the send gate's doze test).
+static void awdlCoexNoteDataFrom(const uint8_t *addr, uint64_t nowUS)
 {
+    if (awdlCoexScheduleCurrent() && ItlAWDL::sameAddress(addr, awdlCoexSchedPeer)) {
+        awdlCoexSchedPeerRxUS = nowUS;
+        awdlCoexPeerSchedule.notePeerFrame(nowUS);
+    }
 }
 
 // Moves the listener's own context when the firmware's channel map changes: up to 149 at 80 MHz when it is
@@ -1137,14 +1244,88 @@ awdlCoexTxTask(void *arg)
     if (running && !awdlStopping && awdlCoexAdded && awdlCoexGeneration == sc->sc_generation)
         that->awdlCoexAddrApply(sc);
     if (running && awdlCoexAdded && awdlCoexGeneration == sc->sc_generation) {
+        if (awdlCoexTx && !awdlCoexTxStaAdded && awdlCoexTxSetupTried < kAwdlCoexTxSetupTries &&
+            awdlCoexBrokenGeneration != sc->sc_generation) {
+            ++awdlCoexTxSetupTried;
+            (void)that->awdlCoexTxSetup(sc);
+        }
+        const uint64_t watchNowUS = awdlUptimeUS();
+        if (awdlCoexTxStaAdded && awdlCoexInFlight && watchNowUS - awdlCoexInFlightUS > kAwdlCoexTxStuckUS &&
+            (!awdlCoexLastCompletionUS || watchNowUS - awdlCoexLastCompletionUS > 1000000ULL ||
+             watchNowUS - awdlCoexInFlightUS > 5000000ULL)) {
+            // A late completion for this frame no longer matches the pending one.
+            awdlCoexInFlight = false;
+            awdlCoexPendingSlot = -1;
+            ++awdlCoexTxStuck;
+            const bool halt = ++awdlCoexStuckStreak >= 3;
+            if (halt) {
+                awdlCoexTxHalted = true;
+                // Three stalls with no completion: the queue may be wedged. Flush and remove the listener's
+                // station and queue (descriptors included); setup then rebuilds them, within its try limit.
+                // If the firmware doesn't confirm, quarantine until it restarts.
+                const int wedgedGen = sc->sc_generation;
+                const uint32_t wedgedTok = awdlCoexToken;
+                const int teardownErr = that->awdlCoexTxTeardown(sc);
+                if (wedgedGen == sc->sc_generation) {
+                    if (teardownErr)
+                        awdlCoexBrokenGeneration = wedgedGen;
+                    else if (wedgedTok == awdlCoexToken)
+                        ++awdlCoexWedgedRebuilds;
+                    awdlCoexStuckStreak = 0;
+                }
+            } else {
+                ++awdlCoexTxPauses;
+                awdlCoexTxPauseUntilUS = watchNowUS + 500000ULL;
+            }
+            {
+                const auto &haltRing = sc->txq[awdlCoexQueue >= 0 ? awdlCoexQueue : 0];
+                snprintf(awdlCoexFaultSnapshot, sizeof(awdlCoexFaultSnapshot),
+                         "%s queue %d token %u gen %d last-ssn %u tail %d queued %d last-slot %d streak %u "
+                         "pending-ms %u last-completion-ms %u",
+                         halt ? "halt" : "pause", awdlCoexQueue, awdlCoexToken, sc->sc_generation, awdlCoexLastSsn,
+                         haltRing.tail, haltRing.queued, awdlCoexLastSlot, awdlCoexStuckStreak,
+                         unsigned((watchNowUS - awdlCoexInFlightUS) / 1000),
+                         awdlCoexLastCompletionUS ? unsigned((watchNowUS - awdlCoexLastCompletionUS) / 1000) : 0xffffffffU);
+            }
+            awdlCoexPublish();
+        }
+        // Setup waits on the firmware; detach or a RUN exit may have come meanwhile.
+        // With the data pump the task runs every few milliseconds; sync frames keep their own pace.
+        const uint64_t taskNowUS = awdlUptimeUS();
+        // Sync pacing. While data moves, every 100 ms. While idle, every 45 ms (kSyncIdleIntervalUS).
+        // (ForbiddenItlwm's -itlawdlawsync, AW-timed idle sync frames, is a later phase of the port.)
+        const bool coexDataActive = awdlCoexLastDataUS && taskNowUS - awdlCoexLastDataUS < 1000000ULL;
+        awdlCoexScheduleCalibrated = awdlCoexScheduleCurrent() && awdlCoexPeerSchedule.calibrated &&
+            awdlCoexPeerSchedule.fresh(taskNowUS);
+        const uint64_t sinceSync = taskNowUS - awdlCoexLastSyncUS;
+        const bool syncDue = !awdlCoexData ||
+            sinceSync >= (coexDataActive ? 100000ULL : ItlAWDL::kSyncIdleIntervalUS);
+        if (awdlCoexTxStaAdded && !awdlCoexInFlight && !awdlCoexTxHalted && !awdlStopping && awdlCoexAdded &&
+            taskNowUS >= awdlCoexTxPauseUntilUS && syncDue) {
+            awdlCoexLastSyncUS = taskNowUS;
+            if (awdlCoexData && !coexDataActive)
+                ++awdlCoexIdleSyncFrames;
+            that->awdlCoexTxSend(sc);
+        }
+        if (awdlCoexData && !awdlStopping && awdlCoexAdded) {
+            // (Block Ack handling and the peer pause are later phases of the port.)
+            that->awdlCoexDataPump(sc);
+        }
         const uint64_t publishNow = awdlUptimeUS();
         if (!awdlStopping && publishNow - awdlCoexLastRoutinePublishUS >= 1000000ULL) {
             awdlCoexLastRoutinePublishUS = publishNow;
             awdlCoexPublish();
         }
     }
-    if (!awdlStopping)
-        timeout_add_msec(&awdlCoexTxTimer, kAwdlCoexTxPeriodMS);
+    if (!awdlStopping) {
+        // Every 2 ms while data moved in the last second, otherwise the sync period.
+        const uint64_t timerNowUS = awdlUptimeUS();
+        const bool dataActive = awdlCoexData && awdlCoexLastDataUS && timerNowUS - awdlCoexLastDataUS < 1000000ULL;
+        unsigned nextMS = dataActive ? 2 : (awdlCoexData ? 20 : unsigned(kAwdlCoexTxPeriodMS));
+        if (awdlCoexGate && awdlCoexGateSinceUS && running && awdlCoexGeneration == sc->sc_generation)
+            nextMS = 1;  // Holding for the phone: look again as soon as it may be back.
+        timeout_add_msec(&awdlCoexTxTimer, nextMS);
+    }
 }
 
 // Receive hook, from iwx_rx_frame before net80211 sees the frame. Frames with AWDL's BSSID (and Block Ack
@@ -1287,4 +1468,495 @@ isolation:
             ++awdlCoexPromiscAmbiguous;
     }
     return false;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Phase 2: transmit from the listener (sync frames, single-frame data, rate ladder, send gate).
+// ---------------------------------------------------------------------------------------------------
+
+// The one channel check for the listener's sending, used before building and again just before sending.
+// Records the reason (and clears it when the channel is fine) and publishes when what it would show changes.
+static bool awdlCoexChannelEligible(struct ieee80211com *ic, struct ieee80211_channel *channel, const char *phase,
+                                    int generation)
+{
+    const unsigned number = channel ? ieee80211_chan2ieee(ic, channel) : 0;
+    const uint32_t flags = channel ? channel->ic_flags : 0;
+    const uint32_t reason = (!channel || number > 255 || !ItlAWDL::fixedScheduleChannel(uint8_t(number)) ? 1U : 0U) |
+        ((channel && awdlCoexNoIr(ic, number)) ? 2U : 0U) | ((flags & IEEE80211_CHAN_DFS) ? 4U : 0U) |
+        ((flags & IEEE80211_CHAN_NOADHOC) ? 8U : 0U) |
+        (!channel || number > 255 || !isset(ic->ic_chan_active, number) ? 16U : 0U) |
+        (number != awdlFixedChannel ? 32U : 0U) |
+        (awdlCoexBlockIneligible(ic, channel) ? 64U : 0U);
+    const bool changed = reason != awdlCoexRefusedReason || (reason && flags != awdlCoexRefusedChannelFlags);
+    awdlCoexRefusedReason = reason;
+    if (reason) {
+        awdlCoexRefusedChannelFlags = flags;
+        ++awdlCoexTxRefusedChannel;
+        snprintf(awdlCoexRefusalSnapshot, sizeof(awdlCoexRefusalSnapshot),
+                 "%s channel %u expected %u flags 0x%x reason 0x%x generation %d", phase, number, awdlFixedChannel,
+                 flags, reason, generation);
+    }
+    if (changed)
+        awdlCoexPublish();
+    return !reason;
+}
+
+// The listener's station and queue. The station has no peer address: like a monitor's, it sends to anyone,
+// at fixed rates. With this firmware the queue goes when the station is removed.
+int ItlIwx::
+awdlCoexTxSetup(struct iwx_softc *sc)
+{
+    struct iwx_add_sta_cmd cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.sta_id = IWX_MONITOR_STA_ID;
+    cmd.station_type = IWX_STA_GENERAL_PURPOSE;
+    cmd.mac_id_n_color = htole32(IWX_FW_CMD_ID_AND_COLOR(kAwdlCoexMacId, 0));
+    IEEE80211_ADDR_COPY(&cmd.addr, etheranyaddr);
+    cmd.tid_disable_tx = htole16(0xffff);
+    cmd.station_flags = htole32(IWX_STA_FLG_FAT_EN_20MHZ | IWX_STA_FLG_MIMO_EN_SISO);
+    cmd.station_flags_msk = htole32(IWX_STA_FLG_FAT_EN_MSK | IWX_STA_FLG_MIMO_EN_MSK);
+    // Who this setup is for. Each firmware command can sleep in the gate, and on return the listener
+    // may be gone, the association changed, the firmware restarted or the driver detaching.
+    const uint32_t token = awdlCoexToken;
+    const int gen = sc->sc_generation;
+    auto stillOurs = [&]() {
+        return token == awdlCoexToken && gen == sc->sc_generation && awdlCoexAdded && !awdlStopping;
+    };
+    struct iwx_rm_sta_cmd rm;
+    memset(&rm, 0, sizeof(rm));
+    rm.sta_id = IWX_MONITOR_STA_ID;
+    // Each attempt's diagnostics start fresh, all together.
+    ++awdlCoexSetupAttempts;
+    awdlCoexQueueStage = "not-tried";
+    awdlCoexQueueAssigned = -1;
+    awdlCoexQueueWritePointer = 0xffffffffU;
+    awdlCoexStaResult = 0;
+    awdlCoexQueueResult = 0;
+    uint32_t status = IWX_ADD_STA_SUCCESS;
+    const int transportErr = iwx_send_cmd_pdu_status(sc, IWX_ADD_STA, sizeof(cmd), &cmd, &status);
+    int err = transportErr;
+    if (!err && (status & IWX_ADD_STA_STATUS_MASK) != IWX_ADD_STA_SUCCESS)
+        err = EIO;
+    awdlCoexStaResult = err ? 0x80000000U | uint32_t(err) | (status << 8) | (transportErr ? 0x40000000U : 0U) : 1;
+    if (err) {
+        // A refusal in the response leaves nothing behind. A transport failure doesn't say, so in the same
+        // firmware nothing is tried again until it restarts.
+        if (transportErr && gen == sc->sc_generation) {
+            ++awdlCoexTeardownErrors;
+            awdlCoexBrokenGeneration = gen;
+        }
+        awdlCoexPublish();
+        return err;
+    }
+    if (!stillOurs()) {
+        // The station was added for a listener that is gone. Within the same firmware, remove it.
+        ++awdlCoexSetupAborts;
+        awdlCoexQueueStage = "aborted";
+        if (gen == sc->sc_generation && iwx_send_cmd_pdu(sc, IWX_REMOVE_STA, 0, sizeof(rm), &rm) &&
+            gen == sc->sc_generation) {
+            ++awdlCoexTeardownErrors;
+            awdlCoexBrokenGeneration = gen;
+        }
+        awdlCoexPublish();
+        return ECANCELED;
+    }
+    awdlCoexQueueStage = "pending";
+    awdlCoexSetupToken = token;
+    awdlCoexSetupGen = gen;
+    const int queue = iwx_tvqm_enable_txq(sc, IWX_MGMT_TID, 0, IWX_DEFAULT_QUEUE_SIZE, IWX_MONITOR_STA_ID);
+    awdlCoexQueueResult = queue < 0 ? 0x80000000U | uint32_t(-queue) : uint32_t(queue);
+    if (queue < 0) {
+        // A failure before the firmware was asked leaves the stage at "pending".
+        if (!strcmp(awdlCoexQueueStage, "pending"))
+            awdlCoexQueueStage = "preflight";
+        // The station, and any queue the firmware made for it, has to go. If removing it fails, the
+        // firmware may still own both, so setup stops until the firmware restarts. After a restart
+        // there is nothing to remove.
+        if (gen == sc->sc_generation && iwx_send_cmd_pdu(sc, IWX_REMOVE_STA, 0, sizeof(rm), &rm) &&
+            gen == sc->sc_generation) {
+            ++awdlCoexTeardownErrors;
+            awdlCoexBrokenGeneration = gen;
+        }
+        awdlCoexPublish();
+        return -queue;
+    }
+    if (!stillOurs()) {
+        // The queue exists, but its listener is gone. Remove the station (and with it the queue); free
+        // the ring only if that worked, otherwise keep it as an orphan for the next reset.
+        ++awdlCoexSetupAborts;
+        awdlCoexQueueStage = "aborted";
+        if (gen == sc->sc_generation) {
+            if (iwx_send_cmd_pdu(sc, IWX_REMOVE_STA, 0, sizeof(rm), &rm)) {
+                if (gen == sc->sc_generation) {
+                    ++awdlCoexTeardownErrors;
+                    awdlCoexBrokenGeneration = gen;
+                    awdlCoexOrphanQueue = queue;
+                }
+            } else if (gen == sc->sc_generation) {
+                iwx_reset_tx_ring(sc, &sc->txq[queue]);
+            }
+        }
+        awdlCoexPublish();
+        return ECANCELED;
+    }
+    awdlCoexQueue = queue;
+    awdlCoexInFlight = false;
+    awdlCoexTxHalted = false;
+    // A new queue: no stall history or pause from an earlier one.
+    awdlCoexLastCompletionUS = 0;
+    awdlCoexTxPauseUntilUS = 0;
+    awdlCoexStuckStreak = 0;
+    memset(awdlCoexSlotKind, 0, sizeof(awdlCoexSlotKind));
+    awdlCoexTxStaAdded = true;
+    awdlCoexPublish();
+    return 0;
+}
+
+// The listener's own frames are built by the AWDL interface (ic_awdl_coex_sync / ic_awdl_coex_pop) into
+// this buffer, then copied into an mbuf for iwx_tx. Command gate only.
+static uint8_t awdlCoexFrameBuf[2304];
+
+static mbuf_t awdlCoexFrameMbuf(const uint8_t *bytes, size_t length)
+{
+    mbuf_t m = nullptr;
+    if (!length || mbuf_getpacket(MBUF_DONTWAIT, &m) || !m)
+        return nullptr;
+    if (mbuf_maxlen(m) < length) {
+        mbuf_freem(m);
+        return nullptr;
+    }
+    memcpy(mbuf_data(m), bytes, length);
+    mbuf_setlen(m, length);
+    mbuf_pkthdr_setlen(m, length);
+    return m;
+}
+
+void ItlIwx::
+awdlCoexTxSend(struct iwx_softc *sc)
+{
+    struct ieee80211com *ic = &sc->sc_ic;
+    struct iwx_node *in = (struct iwx_node *)ic->ic_bss;
+    if (!in || !in->in_phyctxt || !in->in_phyctxt->channel)
+        return;
+    const int gen = sc->sc_generation;
+    {
+        // A channel our frames can't describe, or one the firmware won't let us start on, is refused
+        // before anything is built. Checked again before sending.
+        if (!awdlCoexChannelEligible(ic, awdlCoexMultiActive ? sc->sc_phyctxt[kAwdlCoexPhyId].channel :
+                                     in->in_phyctxt->channel, "before-build", gen))
+            return;
+    }
+    // The firmware ACKs only its context's address, so that has to be the one awdl0 sends from: nothing
+    // goes out until the context has awdl0's address (awdlCoexAddrApply, from this task).
+    if (!awdlCoexAddrKnown || !awdlCoexAddrApplied) {
+        ++awdlCoexTxNotReady;
+        return;
+    }
+    const size_t built = ic->ic_awdl_coex_sync ?
+        ic->ic_awdl_coex_sync(ic, awdlCoexFrameBuf, sizeof(awdlCoexFrameBuf), awdlUptimeUS()) : 0;
+    if (built < 24) {
+        // Not ready: awdl0 doesn't exist yet or macOS hasn't sent its template.
+        ++awdlCoexTxNotReady;
+        return;
+    }
+    // A frame from another address than the firmware's context would never be acknowledged.
+    if (!ItlAWDL::sameAddress(awdlCoexFrameBuf + 10, awdlCoexAddrInFirmware)) {
+        ++awdlCoexTxBuildRejected;
+        return;
+    }
+    mbuf_t packet = awdlCoexFrameMbuf(awdlCoexFrameBuf, built);
+    if (!packet) {
+        ++awdlCoexTxBuildRejected;
+        return;
+    }
+    ++awdlCoexTxBuilt;
+    // The firmware's regulatory decision stands: nothing is started on a channel it marks passive.
+    in = (struct iwx_node *)ic->ic_bss;
+    if (!in || !in->in_phyctxt ||
+        !awdlCoexChannelEligible(ic, awdlCoexMultiActive ? sc->sc_phyctxt[kAwdlCoexPhyId].channel :
+                                 in->in_phyctxt->channel, "before-send", gen)) {
+        mbuf_freem(packet);
+        return;
+    }
+    auto *node = ieee80211_ref_node(ic->ic_bss);
+    awdlCoexSending = true;
+    const int err = iwx_tx(sc, packet, node, EDCA_AC_BE, awdlCoexQueue);
+    awdlCoexSending = false;
+    if (err) {
+        ieee80211_release_node(ic, node);
+        ++awdlCoexTxSubmitErrors;
+        return;
+    }
+    ++awdlCoexTxSubmitted;
+    awdlCoexInFlight = true;
+    awdlCoexInFlightUS = awdlUptimeUS();
+}
+
+// Sends what macOS queued on awdl0 out the listener's queue, keeping room in the ring for sync frames.
+// Single frames only in this phase; the aggregate (Block Ack) path is a later phase of the port.
+void ItlIwx::
+awdlCoexDataPump(struct iwx_softc *sc, unsigned budget)
+{
+    struct ieee80211com *ic = &sc->sc_ic;
+    const int gen = sc->sc_generation;
+    struct iwx_node *in = (struct iwx_node *)ic->ic_bss;
+    if (!awdlCoexData || !awdlCoexTxStaAdded || !awdlCoexAdded || awdlCoexGeneration != gen || awdlCoexTxHalted ||
+        awdlStopping || awdlCoexQueue < 0 || awdlCoexQueue >= int(nitems(sc->txq)) || !in || !in->in_phyctxt ||
+        ic->ic_state != IEEE80211_S_RUN || ic->ic_opmode != IEEE80211_M_STA || !ic->ic_awdl_coex_pop)
+        return;
+    if (awdlUptimeUS() < awdlCoexTxPauseUntilUS || !awdlCoexAddrApplied) {
+        if (ic->ic_awdl_coex_service)
+            ic->ic_awdl_coex_service(ic);
+        return;
+    }
+    ++awdlCoexDataPumps;
+    // The firmware's regulatory decision stands: nothing starts on a channel it doesn't allow.
+    struct ieee80211_channel *listen = awdlCoexMultiActive ? sc->sc_phyctxt[kAwdlCoexPhyId].channel :
+        in->in_phyctxt->channel;
+    if (!awdlCoexChannelEligible(ic, listen, "data", gen)) {
+        if (ic->ic_awdl_coex_service)
+            ic->ic_awdl_coex_service(ic);
+        return;
+    }
+    const struct iwx_tx_ring &ring = sc->txq[awdlCoexQueue];
+    // Send gate; see awdlCoexGate. Frames for the schedule peer leave only while it is on our channel.
+    bool gateClosed = false;
+    if (awdlCoexGate && awdlCoexScheduleCurrent()) {
+        const uint64_t gateNowUS = awdlUptimeUS();
+        const bool dozing = awdlCoexPeerSchedule.presentEntries() <= ItlAWDL::kPeerDozeMaxEntries &&
+            (!awdlCoexSchedPeerRxUS || gateNowUS - awdlCoexSchedPeerRxUS > kAwdlGateAwakeUS);
+        const auto gate = awdlCoexPeerSchedule.sendGate(gateNowUS, dozing, kAwdlGateAwWindowUS);
+        if (gate == ItlAWDL::PeerSchedule::SendGate::Open) {
+            awdlCoexGateSinceUS = 0;
+            awdlCoexGateKind = 0;
+        } else {
+            const uint8_t kind = uint8_t(gate);
+            if (!awdlCoexGateSinceUS || kind != awdlCoexGateKind) {
+                if (!awdlCoexGateSinceUS)
+                    ++awdlCoexGateHolds;
+                awdlCoexGateSinceUS = gateNowUS;
+                awdlCoexGateKind = kind;
+                // Away: through the away run (450 ms ceiling). Doze: until the next AW start, with 2 ms spare.
+                awdlCoexGateLimitUS = gate == ItlAWDL::PeerSchedule::SendGate::Away ?
+                    awdlCoexPeerSchedule.pauseLimitUS(gateNowUS) : awdlCoexPeerSchedule.awUS() + 2000;
+            }
+            if (gateNowUS - awdlCoexGateSinceUS < awdlCoexGateLimitUS) {
+                gateClosed = true;
+                if (gate == ItlAWDL::PeerSchedule::SendGate::Away)
+                    ++awdlCoexGateAwayTicks;
+                else
+                    ++awdlCoexGateDozeTicks;
+            } else if (awdlCoexGateLimitUS) {
+                // The schedule still says no past its own limit: send rather than starve, until it opens.
+                ++awdlCoexGateForced;
+                awdlCoexGateLimitUS = 0;
+            }
+        }
+    } else {
+        awdlCoexGateSinceUS = 0;
+        awdlCoexGateKind = 0;
+    }
+    while (budget && ring.queued < 64 && awdlCoexAdded && awdlCoexGeneration == sc->sc_generation && !awdlStopping) {
+        // A closed gate holds every frame for the schedule peer; frames for others still go.
+        const uint8_t *holdFor = gateClosed ? awdlCoexSchedPeer : nullptr;
+        const size_t length = ic->ic_awdl_coex_pop(ic, awdlCoexFrameBuf, sizeof(awdlCoexFrameBuf), holdFor,
+                                                   gateClosed ? 1 : 0);
+        if (length < 24)
+            break;
+        --budget;
+        mbuf_t next = awdlCoexFrameMbuf(awdlCoexFrameBuf, length);
+        if (!next) {
+            ++awdlCoexDataTxErrors;
+            break;
+        }
+        auto *node = ieee80211_ref_node(ic->ic_bss);
+        awdlCoexSending = true;
+        awdlCoexSendingData = true;
+        const int err = iwx_tx(sc, next, node, EDCA_AC_BE, awdlCoexQueue);
+        awdlCoexSendingData = false;
+        awdlCoexSending = false;
+        if (err) {
+            ieee80211_release_node(ic, node);
+            ++awdlCoexDataTxErrors;
+            continue;
+        }
+        ++awdlCoexDataTx;
+        awdlCoexLastDataUS = awdlUptimeUS();
+    }
+    // Hands macOS back room in awdl0's queue, so its output keeps moving.
+    if (ic->ic_awdl_coex_service)
+        ic->ic_awdl_coex_service(ic);
+}
+
+// Transmit gate in iwx_tx for the listener's queue: only valid AWDL action frames, or (while the data pump
+// submits) AWDL IPv6 data, in the gate, while the listener and its station exist. Frees m when refusing.
+bool ItlIwx::
+awdlCoexTxAllowed(struct iwx_softc *sc, mbuf_t m, int qid)
+{
+    ItlAWDL::ActionFrame decoded;
+    ItlAWDL::DataFrameView data;
+    const uint8_t *bytes = mtod(m, const uint8_t *);
+    const bool ok = qid == awdlCoexQueue && awdlCoexQueue >= 0 && awdlCoexTx && awdlCoexSending && awdlCoexTxStaAdded && awdlCoexAdded &&
+        awdlCoexGeneration == sc->sc_generation && getMainWorkLoop()->inGate() &&
+        sc->sc_ic.ic_opmode == IEEE80211_M_STA && sc->sc_ic.ic_state == IEEE80211_S_RUN && !mbuf_next(m) &&
+        mbuf_len(m) == mbuf_pkthdr_len(m) && mbuf_len(m) <= 2304 &&
+        (awdlCoexSendingData ?
+            awdlCoexData && ItlAWDL::parseDataFrame(bytes, mbuf_len(m), false, &data) == ItlAWDL::ParseResult::Valid :
+            ItlAWDL::parseAction(bytes, mbuf_len(m), &decoded) == ItlAWDL::ParseResult::Valid);
+    if (!ok)
+        mbuf_freem(m);
+    return ok;
+}
+
+// Rate for a frame on the listener's queue (iwx_tx_fill_cmd). The listener's station has no rate table: a
+// fixed OFDM rate valid on either band. 6 Mbit/s for group and management frames, 24 Mbit/s for unicast
+// data at step 0, then HT MCS 4/5/7 at 20 MHz, and VHT80 two streams MCS 4/7 at 80 MHz.
+const struct iwx_rate *ItlIwx::
+awdlCoexTxRate(struct iwx_softc *sc, struct iwx_node *in, struct ieee80211_frame *wh, uint32_t *flags,
+               uint32_t *rate_n_flags, int *ridxOut)
+{
+    struct ieee80211_node *ni = &in->in_ni;
+    const int type = wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK;
+    const int ridx = (IEEE80211_IS_MULTICAST(wh->i_addr1) || type != IEEE80211_FC0_TYPE_DATA) ?
+        IWX_RATE_6M_INDEX : IWX_RATE_24M_INDEX;
+    *ridxOut = ridx;
+    *flags |= IWX_TX_FLAGS_CMD_RATE;
+    const uint8_t vhtCmdVer = iwx_lookup_cmd_ver(sc, IWX_LONG_GROUP, IWX_TX_CMD);
+    const uint8_t bothAntennas = IWX_RATE_MCS_ANT_AB_MSK >> IWX_RATE_MCS_ANT_POS;
+    if (ridx == IWX_RATE_24M_INDEX && awdlCoexRateStep >= 4 && awdlCoexRateStep < nitems(kAwdlCoexRateMcs) &&
+        awdlCoexOwnWidth == 80 && vhtCmdVer > 8 && vhtCmdVer != IWX_FW_CMD_VER_UNKNOWN &&
+        (iwx_fw_valid_tx_ant(sc) & bothAntennas) == bothAntennas) {
+        // VHT, 80 MHz, two streams, as ForbiddenItlwm's dedicated mode sends at 80 MHz.
+        *rate_n_flags = htole32(IWX_RATE_MCS_VHT_MSK | IWX_RATE_MCS_CHAN_WIDTH_80 | IWX_RATE_MCS_NSS_MSK |
+                                IWX_RATE_MCS_ANT_AB_MSK | uint32_t(kAwdlCoexRateMcs[awdlCoexRateStep]));
+        ++awdlCoexVhtFrames;
+        return &iwx_rates[IWX_RATE_MCS_7_INDEX];
+    }
+    if (ridx == IWX_RATE_24M_INDEX && awdlCoexRateStep >= 4)
+        awdlCoexRateStep = 3; // Not at 80 MHz any more, or no VHT command format: back to HT.
+    if (ridx == IWX_RATE_24M_INDEX && awdlCoexRateStep > 0 && awdlCoexRateStep < 4) {
+        // A fixed HT rate, 20 MHz, one stream, long guard interval.
+        const unsigned mcs = kAwdlCoexRateMcs[awdlCoexRateStep];
+        const iwx_rate *htInfo = &iwx_rates[iwx_mcs2ridx[mcs]];
+        uint32_t htFlags = iwx_get_tx_ant(sc, ni, htInfo, type, wh);
+        const uint8_t htCmdVer = iwx_lookup_cmd_ver(sc, IWX_LONG_GROUP, IWX_TX_CMD);
+        if (htCmdVer > 8 && htCmdVer != IWX_FW_CMD_VER_UNKNOWN)
+            htFlags |= IWX_RATE_MCS_HT_MSK | uint32_t(mcs & IWX_RATE_HT_MCS_CODE_MSK);
+        else
+            htFlags |= IWX_RATE_MCS_HT_MSK_V1 | uint32_t(mcs);
+        *rate_n_flags = htole32(htFlags);
+        return htInfo;
+    }
+    return nullptr;   // A legacy OFDM rate (ridxOut): the caller builds rate_n_flags as usual.
+}
+
+// TX response on the listener's queue (iwx_rx_tx_cmd). This completion frees slots from the tail up to,
+// not including, idx; that has to be at least one and at most what is outstanding, anything else is a
+// fault and nothing is freed for it. Returns false for such a fault (the caller then returns too).
+bool ItlIwx::
+awdlCoexTxDone(struct iwx_softc *sc, struct iwx_rx_packet *pkt, struct iwx_tx_resp *tx_resp,
+               struct iwx_tx_ring *ring, int qid, int idx, uint32_t ssn)
+{
+    const int n = ring->ring_count;
+    const int freed = n > 0 ? (idx - ring->tail + n) % n : 0;
+    awdlCoexLastBoundary = idx;
+    awdlCoexLastSsn = ssn;
+    if (qid == awdlCoexQueue && n > 0 && freed >= 1 && freed <= ring->queued) {
+        awdlCoexLastCompletionUS = awdlUptimeUS();
+        awdlCoexStuckStreak = 0;
+    }
+    if (n <= 0 || freed < 1 || freed > ring->queued) {
+        ++awdlCoexBadCompletions;
+        snprintf(awdlCoexFaultSnapshot, sizeof(awdlCoexFaultSnapshot),
+                 "bad completion queue %d token %u gen %d ssn %u tail %d queued %d pending %d status 0x%x",
+                 qid, awdlCoexToken, sc->sc_generation, ssn, ring->tail, ring->queued, awdlCoexPendingSlot,
+                 unsigned(le16toh(tx_resp->status.status)));
+        awdlCoexPublish();
+        return false;
+    }
+    // The status belongs to the descriptor the response header names (the index we put in the command
+    // header). The SSN is only the reclaim boundary. Every reclaimed slot is cleared; only the named one
+    // takes this status. A missing index identifies a candidate only when one descriptor was reclaimed.
+    const int status = le16toh(tx_resp->status.status) & IWX_TX_STATUS_MSK;
+    const bool ok = status == IWX_TX_STATUS_SUCCESS;
+    int statusSlot = ItlAWDL::reclaimStatusSlot(ring->tail, freed, n, pkt->hdr.idx);
+    const bool indexed = statusSlot >= 0;
+    if (indexed) {
+        ++awdlCoexStatusIdxHits;
+    } else {
+        ++awdlCoexStatusIdxMisses;
+        if (freed == 1)
+            statusSlot = ring->tail;
+    }
+    if (freed > 1)
+        ++awdlCoexMultiReclaims;
+    bool attributed = false;
+    for (int k = 0; k < freed; ++k) {
+        const int slot = (ring->tail + k) % n;
+        const bool own = slot == statusSlot;
+        if (qid == awdlCoexQueue && slot == awdlCoexPendingSlot && awdlCoexInFlight &&
+            awdlCoexPendingGeneration == sc->sc_generation) {
+            awdlCoexInFlight = false;
+            awdlCoexPendingSlot = -1;
+            if (own) {
+                ++(ok ? awdlCoexTxOK : awdlCoexTxFailed);
+                attributed = true;
+            } else {
+                ++awdlCoexSyncReclaimedUnknown; // Reclaimed; its own status isn't in this response.
+            }
+        }
+        if (!awdlCoexDataTx || qid != awdlCoexQueue || slot >= int(nitems(awdlCoexSlotKind)) ||
+            !awdlCoexSlotKind[slot])
+            continue;
+        const uint8_t kind = awdlCoexSlotKind[slot];
+        awdlCoexSlotKind[slot] = 0;
+        if (!own) {
+            ++awdlCoexReclaimUnknown;
+            continue;
+        }
+        attributed = true;
+        ++(ok ? awdlCoexDataOK : awdlCoexDataFailed);
+        if (kind == 2) {
+            ++(ok ? awdlCoexUcastOK : awdlCoexUcastFailed);
+            ++(ok ? awdlCoexRateWindowOK : awdlCoexRateWindowFailed);
+            const uint32_t window = awdlCoexRateWindowOK + awdlCoexRateWindowFailed;
+            if (window >= 64) {
+                if (awdlCoexRateWindowFailed * 5 > window && awdlCoexRateStep > 0) {
+                    --awdlCoexRateStep;
+                    ++awdlCoexRateDowns;
+                } else if (awdlCoexRateWindowFailed * 20 < window &&
+                           awdlCoexRateStep + 1 < (awdlCoexOwnWidth == 80 ? nitems(kAwdlCoexRateMcs) : 4U)) {
+                    ++awdlCoexRateStep;
+                    ++awdlCoexRateUps;
+                }
+                awdlCoexRateWindowOK = awdlCoexRateWindowFailed = 0;
+            }
+        } else if (kind == 1) {
+            ++(ok ? awdlCoexGroupOK : awdlCoexGroupFailed);
+        }
+    }
+    if (!attributed)
+        ++awdlCoexLateCompletions;
+    return true;
+}
+
+// Slot bookkeeping in iwx_tx for a frame just placed on the listener's queue.
+static void awdlCoexNoteSubmitted(struct iwx_softc *sc, int qid, int idx, const struct ieee80211_frame *wh)
+{
+    if (qid != awdlCoexQueue || awdlCoexQueue < 0)
+        return;
+    if (idx >= 0 && idx < int(nitems(awdlCoexSlotKind)))
+        awdlCoexSlotKind[idx] = awdlCoexSendingData ? (IEEE80211_IS_MULTICAST(wh->i_addr1) ? 1 : 2) : 0;
+    if (!awdlCoexSendingData) {
+        awdlCoexPendingSlot = idx;
+        awdlCoexLastSlot = idx;
+        awdlCoexPendingGeneration = sc->sc_generation;
+    }
+}
+
+// The listener's frames hold a node reference, released on completion; a ring reset has to release it too.
+static bool awdlCoexOwnsRing(const struct iwx_tx_ring *ring)
+{
+    return (awdlCoexQueue >= 0 && ring->qid == awdlCoexQueue) ||
+        (awdlCoexOrphanQueue >= 0 && ring->qid == awdlCoexOrphanQueue);
 }

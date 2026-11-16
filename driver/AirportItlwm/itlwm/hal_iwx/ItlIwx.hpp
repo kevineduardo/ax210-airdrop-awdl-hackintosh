@@ -385,7 +385,8 @@ public:
                             const struct iwx_rate *rinfo, int type, struct ieee80211_frame *wh);
     void    iwx_toggle_tx_ant(struct iwx_softc *sc, uint8_t *ant);
     void    iwx_tx_update_byte_tbl(struct iwx_softc *, struct iwx_tx_ring *, int, uint16_t, uint16_t);
-    int    iwx_tx(struct iwx_softc *, mbuf_t, struct ieee80211_node *, int);
+    // qid >= 0: the AWDL coex backend's own queue (ForbiddenItlwm's monitorQueue argument).
+    int    iwx_tx(struct iwx_softc *, mbuf_t, struct ieee80211_node *, int, int qid = -1);
     int    iwx_flush_sta_tids(struct iwx_softc *, int, uint16_t);
     int    iwx_flush_sta(struct iwx_softc *, struct iwx_node *);
     int    iwx_drain_sta(struct iwx_softc *sc, struct iwx_node *, int);
@@ -466,6 +467,14 @@ public:
     void   awdlCoexAddrApply(struct iwx_softc *);
     int    awdlCoexBaRemovePeer(struct iwx_softc *);
     int    awdlCoexTxTeardown(struct iwx_softc *);
+    int    awdlCoexTxSetup(struct iwx_softc *);
+    void   awdlCoexTxSend(struct iwx_softc *);
+    void   awdlCoexDataPump(struct iwx_softc *, unsigned budget = ~0U);
+    bool   awdlCoexTxAllowed(struct iwx_softc *, mbuf_t, int qid);
+    const struct iwx_rate *awdlCoexTxRate(struct iwx_softc *, struct iwx_node *, struct ieee80211_frame *,
+                                          uint32_t *flags, uint32_t *rate_n_flags, int *ridx);
+    bool   awdlCoexTxDone(struct iwx_softc *, struct iwx_rx_packet *, struct iwx_tx_resp *, struct iwx_tx_ring *,
+                          int qid, int idx, uint32_t ssn);
     bool   awdlCoexRxHook(struct iwx_softc *, mbuf_t, int chanidx, bool chanValid, int rate_n_flags,
                           struct ieee80211_rxinfo *);
     int    iwx_mcc_request(struct iwx_softc *, uint16_t country, uint8_t source, ItlAWDL::MccSample *, bool apply);

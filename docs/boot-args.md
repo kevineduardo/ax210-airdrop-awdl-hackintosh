@@ -75,9 +75,12 @@ The port lands in phases. What each phase does is listed in [test-results-tahoe.
 
 | Boot argument | Default | What it does |
 |---|---|---|
-| `-itlawdlcoex` | off | Selects the coex backend. Needs `-itlawdl` and a build that passes the AWDL build guard. While en0 is associated, a listener context runs on its own channel (149 at 80 MHz when the firmware allows all of 149 to 161, else 6 at 20 MHz, else en0's channel), answers the firmware's country notice and hands every AWDL action and data frame it hears to `awdl0`. Phase 1: receive only, so the Mac is not discoverable over AWDL and AirDrop does not work yet. The choice is shown as `AWDLBackend` (`coex`, `p2p`, `scan` or `none`). |
+| `-itlawdlcoex` | off | Selects the coex backend. Needs `-itlawdl` and a build that passes the AWDL build guard, and the AW timeline (`-itlawdlaw`), which stores the frame templates macOS hands over. While en0 is associated, a listener context runs on its own channel (149 at 80 MHz when the firmware allows all of 149 to 161, else 6 at 20 MHz, else en0's channel), answers the firmware's country notice, hands every AWDL action and data frame it hears to `awdl0`, sends macOS's sync frames (MI and PSF, every 45 ms idle, 100 ms while data moves) and sends `awdl0`'s data one frame at a time, with a rate ladder up to VHT 80 MHz two streams and a send gate that follows the iPhone's schedule. No Block Ack yet. The choice is shown as `AWDLBackend` (`coex`, `p2p`, `scan` or `none`). |
 | `-itlawdlcoexshared` | off | With `-itlawdlcoex`: never give the listener its own channel; it shares en0's channel and binding (ForbiddenItlwm without its multi-channel switch). For A/B tests only. Refused when en0 is on a DFS channel, because the listener could never send there. |
 | `-itlawdlsameband` | off | With `-itlawdlcoex`: while en0 is on 2.4 GHz, keep the listener on channel 6 instead of 149, so the radio does not switch bands (ForbiddenItlwm's switch of the same name). |
+| `-itlawdlcoexnogate` | off | With `-itlawdlcoex`: turns the send gate off, so data for the iPhone also leaves while its schedule says it is on another channel or dozing. For A/B tests. |
+| `-itlawdlcoexcalwait` | off | With `-itlawdlcoex`: the iPhone's schedule is used only after it has been calibrated from about 300 of its frames, instead of assuming offset 0 from its first sync frame. For A/B tests. |
+| `itlawdlcoexpull=<n>` | 192 | With `-itlawdlcoex`: how many `awdl0` packets the driver takes from the network stack before it stops pulling (32 to 240). The P2P path keeps 32. |
 
 The counters are on the controller: `ioreg -lw0 -r -c AirportItlwm -d1 | grep -E 'AWDLBackend|ITLAWDLCoex'`.
 

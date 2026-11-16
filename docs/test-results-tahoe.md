@@ -307,6 +307,30 @@ Risk to watch in this phase: if the listener moves between 6 and 149 while runni
 
 Results: not run yet.
 
+### Phase 2: transmit and AirDrop (Set B, then Set B plus `-itlawdlcoexnogate`)
+
+AirDrop is expected to work both ways in this phase, without Block Ack.
+
+| Check | Command | Expected |
+|---|---|---|
+| Station and queue | `ioreg -lw0 -r -c AirportItlwm -d1 \| grep -E 'ITLAWDLCoex(StaResult\|QueueResult\|QueueStage)'` | `1`, a queue number (not `0x8000....`), `"ok"` |
+| Sync frames | `ioreg -lw0 -r -c AirportItlwm -d1 \| grep -E 'ITLAWDLCoexTx(Built\|Submitted\|NotReady)'`, twice, 10 s apart | `TxBuilt` and `TxSubmitted` rise by about 10 to 22 per second; `TxNotReady` stops rising once macOS has sent its template |
+| Sync completions | `ioreg -lw0 -r -c AirportItlwm -d1 \| grep -E 'ITLAWDLCoexTx(OK\|Failed\|Stuck\|Halted)\|WedgedRebuilds\|BadCompletions'` | `TxOK` rising, `TxFailed` near 0, `TxStuck` 0, `TxHalted = No`, `WedgedRebuilds` 0, `BadCompletions` 0 |
+| Address | `ioreg -lw0 -r -c AirportItlwm -d1 \| grep -E 'ITLAWDLCoexAddr'` | `ITLAWDLCoexAddrApplied = Yes`; `ITLAWDLCoexAddrChanges` small (one per `awdl0` address change) |
+| Channel refusals | `ioreg -lw0 -r -c AirportItlwm -d1 \| grep -E 'ITLAWDLCoex(RefusedReason\|LastRefusal)'` | `RefusedReason = 0` while sending. Otherwise the bits say why: 2 passive, 4 DFS, 16 inactive, 64 move pending |
+| On `awdl0` | `ioreg -lw0 -r -c AirportItlwmAWDLInterface -d1 \| grep -E 'AWDLCoexSync(PSF\|MI)\|AWDLTx(PSF\|MI)\b\|AWDLCoexPull'` | `AWDLCoexSyncPSF` and `AWDLCoexSyncMI` rising; `AWDLTxPSF` and `AWDLTxMI` stay 0 (the P2P push path is idle); `AWDLCoexPull = 192` |
+| Discovery | iPhone share sheet with the Mac's AirDrop window open | The Mac appears. Record the time from opening the share sheet |
+| Mac to iPhone | `tools/airdrop/airdrop-measure.sh` with a 12 MB photo | Completes; at least the 1.0.0-beta.2 speed (about 1 MB/s) and no stalls |
+| iPhone to Mac | 12 MB photo | Completes over AWDL: `log show --last 5m --predicate 'process == "sharingd"' \| grep -i awdl` names `awdl0` for the transfer |
+| Data counters during a transfer | `ioreg -lw0 -r -c AirportItlwm -d1 \| grep -E 'ITLAWDLCoex(DataTx\|UcastOK\|UcastFailed\|RateStep\|VhtFrames)'` | `UcastFailed` under 10 % of `UcastOK + UcastFailed`; `RateStep` climbs to 4 or 5 on 149 at 80 MHz; `VhtFrames` above 0 |
+| iPhone schedule | `ioreg -lw0 -r -c AirportItlwm -d1 \| grep -E 'ITLAWDLCoex(ScheduleKnown\|PeerSyncFrames\|PeerPresentEntries)'` | `Yes`, rising, 5 to 15 entries on our channel during data |
+| Send gate | `ioreg -lw0 -r -c AirportItlwm -d1 \| grep ITLAWDLCoexGate` | `GateHolds` above 0 when the iPhone's schedule has away entries; `GateForced` small |
+| `awdl0` queue | `ioreg -lw0 -r -c AirportItlwmAWDLInterface -d1 \| grep -E 'AWDLDataTx\b\|AWDLDataRx\b\|AWDLDataTxDropFull'` | rising / rising / 0 |
+| Idle cost (record only) | `top -l 5 -stats pid,command,cpu -o cpu \| head -20` and `pmset -g thermlog`, with the listener up and no AirDrop activity for 5 minutes | Record the kernel_task CPU share with Set B and with Set A |
+| A/B | Repeat the two 12 MB transfers with Set B plus `-itlawdlcoexnogate` | Record both directions; compare with the gate on |
+
+Results: not run yet.
+
 ## OpenCore requirements for Tahoe
 
 - `Kernel > Quirks > PowerTimeoutKernelPanic = false`. On kernel 25.6 the quirk falls back to replacing the kernel's first `"com.apple\0"` with `"not.apple\0"`, which breaks pf anchor checks, turns off Skywalk's transport agent and breaks QUIC pacing.
